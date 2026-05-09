@@ -34,12 +34,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── CORS — allow all origins in production ──────────────────────────────────
+# We allow all because Vercel preview deployments have dynamic URLs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],           # Allow everything — JWT handles auth security
+    allow_credentials=False,       # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(auth_router)
@@ -61,10 +64,18 @@ app.include_router(messages_router)
 
 @app.get("/")
 async def root():
-    return {"message": f"{settings.APP_NAME} API is running", "version": "1.0.0"}
+    return {
+        "message": f"{settings.APP_NAME} API is running",
+        "version": "1.0.0",
+        "status": "healthy",
+    }
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "app": settings.APP_NAME}
 
+
+@app.get("/ping")
+async def ping():
+    return {"pong": True}
