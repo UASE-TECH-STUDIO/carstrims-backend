@@ -5,11 +5,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     APP_NAME: str = "CARSTRIMS"
     DEBUG: bool = False
-    FRONTEND_URL: str = "https://carstrims.vercel.app"
+    FRONTEND_URL: str = "https://carstrims-app.vercel.app"
 
     # MongoDB
     MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-    DATABASE_NAME: str = os.getenv("DATABASE_NAME", "car_dealer_db")
+    DB_NAME: str = os.getenv("DB_NAME", "car_dealer_db")
 
     # JWT
     SECRET_KEY: str = os.getenv("SECRET_KEY", "carstrims-super-secret-key-change-in-production")
