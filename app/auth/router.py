@@ -180,7 +180,7 @@ async def forgot_password(data: ForgotPasswordRequest):
         "receiverId": str(user["_id"]),
         "type": "general",
         "title": "Password Reset",
-        "message": f"Your temporary password is: {temp_password} — Please change it after logging in.",
+        "message": f"Your temporary password is: {temp_password} â€” Please change it after logging in.",
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
@@ -213,3 +213,141 @@ async def logout(current_user: dict = Depends(get_current_user)):
     db = get_db()
     await db["refresh_tokens"].delete_many({"userId": str(current_user["_id"])})
     return {"message": "Logged out successfully"}
+
+class ForgotPasswordOptions(BaseModel):
+    email: str
+
+
+class ForgotPasswordSend(BaseModel):
+    email: str
+    method: str  # whatsapp | email | admin_message
+
+
+@router.post("/forgot-password/options")
+async def forgot_password_options(data: ForgotPasswordOptions):
+    """Return masked recovery options for the account."""
+    db = get_db()
+
+    user = await db["users"].find_one({"email": data.email.lower()})
+    if not user:
+        # Return generic option - don't reveal if email exists
+        return {
+            "options": [
+                {
+                    "type": "admin_message",
+                    "label": "Contact Support",
+                    "masked": "Send a request to CARSTRIMS admin for manual verification",
+                }
+            ]
+        }
+
+    options = []
+
+    # WhatsApp option
+    whatsapp = user.get("whatsapp") or user.get("phone")
+    if whatsapp and len(whatsapp) >= 4:
+        last4 = whatsapp[-4:]
+        options.append({
+            "type": "whatsapp",
+            "label": "Send to WhatsApp",
+            "masked": f"WhatsApp ending in ****{last4}",
+        })
+
+    # Email option (masked)
+    email = user.get("email", "")
+    if "@" in email:
+        parts = email.split("@")
+        masked_name = parts[0][:2] + "****" if len(parts[0]) > 2 else "****"
+        options.append({
+            "type": "email",
+            "label": "Send to Email",
+            "masked": f"{masked_name}@{parts[1]}",
+        })
+
+    # Always offer admin contact
+    options.append({
+        "type": "admin_message",
+        "label": "Contact Admin Directly",
+        "masked": "Send a recovery request to CARSTRIMS admin for identity verification",
+    })
+
+    return {"options": options}
+
+
+@router.post("/forgot-password/send")
+async def forgot_password_send(data: ForgotPasswordSend):
+    """Process recovery request via chosen method."""
+    db = get_db()
+
+    user = await db["users"].find_one({"email": data.email.lower()})
+
+    if data.method == "admin_message":
+        # Create a notification for all super admins
+        admins = await db["users"].find({"role": "SYSTEM_ADMIN"}).to_list(5)
+        for admin in admins:
+            await db["notifications"].insert_one({
+                "receiverId": str(admin["_id"]),
+                "type": "password_recovery",
+                "title": "Password Recovery Request",
+                "message": f"User with email {data.email} has requested password recovery. Please verify their identity and assist them.",
+                "isRead": False,
+                "data": {"email": data.email},
+                "createdAt": datetime.utcnow(),
+            })
+        # Also create a support conversation
+        if user:
+            for admin in admins[:1]:  # Message first admin
+                admin_id = str(admin["_id"])
+                user_id = str(user["_id"])
+                conv_id = f"CONV-RECOVERY-{user_id[:6]}"
+                existing = await db["conversations"].find_one({"conversationId": conv_id})
+                if not existing:
+                    await db["conversations"].insert_one({
+                        "conversationId": conv_id,
+                        "participants": [admin_id, user_id],
+                        "type": "support",
+                        "lastMessage": "Password recovery request",
+                        "lastMessageAt": datetime.utcnow(),
+                        "createdAt": datetime.utcnow(),
+                    })
+                await db["messages"].insert_one({
+                    "messageId": "MSG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8)),
+                    "conversationId": conv_id,
+                    "senderId": user_id,
+                    "receiverId": admin_id,
+                    "message": f"I need help recovering my account ({data.email}). I cannot access my password.",
+                    "isRead": False,
+                    "createdAt": datetime.utcnow(),
+                })
+        return {"message": "Recovery request sent to admin"}
+
+    if not user:
+        # Silently succeed - don't reveal account existence
+        return {"message": "Recovery sent if account exists"}
+
+    if data.method in ("whatsapp", "email"):
+        # Generate a secure temp token (not exposed directly)
+        import secrets
+        reset_token = secrets.token_urlsafe(32)
+        await db["password_reset_tokens"].insert_one({
+            "userId": str(user["_id"]),
+            "email": user["email"],
+            "token": reset_token,
+            "createdAt": datetime.utcnow(),
+            "expiresAt": datetime.utcnow().replace(
+                minute=datetime.utcnow().minute + 30
+            ),
+            "used": False,
+        })
+        # Store notification with token (simulates sending)
+        await db["notifications"].insert_one({
+            "receiverId": str(user["_id"]),
+            "type": "password_recovery",
+            "title": "Password Recovery Requested",
+            "message": f"Someone requested a password reset for your account. If this was you, contact support or use the link sent to your registered {data.method}. If not, please secure your account immediately.",
+            "isRead": False,
+            "data": {"token": reset_token, "method": data.method},
+            "createdAt": datetime.utcnow(),
+        })
+
+    return {"message": f"Recovery instructions sent via {data.method}"}

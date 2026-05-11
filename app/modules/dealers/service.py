@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from bson import ObjectId
 from fastapi import HTTPException, status
 from app.database.connection import get_db
@@ -155,7 +155,7 @@ async def approve_dealer(dealer_id: str, admin_id: str) -> dict:
     await db["dealer_organizations"].update_one(
         {"_id": dealer["_id"]},
         {"$set": {
-            "status": DealerStatus.APPROVED.value,
+            "status": "approved",
             "approvedAt": datetime.utcnow(),
             "approvedBy": admin_id,
             "updatedAt": datetime.utcnow(),
