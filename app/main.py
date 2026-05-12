@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database.connection import connect_db, close_db
@@ -16,6 +16,7 @@ from app.modules.movements.router import router as movements_router
 from app.modules.cctv.router import router as cctv_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.users.admin_router import router as admin_router
+from app.modules.notifications.push_router import router as push_router
 from app.modules.users.user_router import router as user_router
 from app.modules.messages.router import router as messages_router
 
@@ -59,6 +60,7 @@ app.include_router(cctv_router)
 app.include_router(inventory_router)
 app.include_router(admin_router)
 app.include_router(user_router)
+app.include_router(push_router)
 app.include_router(messages_router)
 
 
