@@ -1,0 +1,22 @@
+name: CARSTRIMS Full Stack Warmup
+
+on:
+  schedule:
+    # Runs every 10 minutes to stay ahead of Render's 15-minute spin-down
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows you to run it manually from the "Actions" tab
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping All Services
+        run: |
+          echo "Pinging Frontend..."
+          curl -I https://carstrims-app.vercel.app
+          
+          echo "Pinging Backend API..."
+          curl -I https://carstrims-backend.onrender.com/docs
+          
+          echo "Pinging Socket Server..."
+          curl -I https://socket-server-zrfx.onrender.com
