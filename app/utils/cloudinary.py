@@ -2,7 +2,6 @@
 import cloudinary.uploader
 from app.config.settings import settings
 from fastapi import HTTPException, UploadFile
-import os
 
 cloudinary.config(
     cloud_name=settings.CLOUDINARY_CLOUD_NAME,
@@ -17,30 +16,22 @@ MAX_IMAGE_SIZE = 10 * 1024 * 1024   # 10MB
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
 
 
-async def upload_image(
-    file: UploadFile,
-    folder: str,
-    public_id: str = None,
-) -> dict:
+async def upload_image(file: UploadFile, folder: str, public_id: str = None) -> dict:
     if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file type. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}",
-        )
-
+        raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: jpeg, png, webp, gif")
     contents = await file.read()
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=400, detail="Image too large. Max 10MB.")
-
     try:
         result = cloudinary.uploader.upload(
             contents,
             folder=f"car-dealer-app/{folder}",
             public_id=public_id,
             overwrite=True,
+            # NO aggressive crop — just resize if too large, preserve aspect ratio
             transformation=[
-                {"width": 1200, "height": 900, "crop": "limit"},
-                {"quality": "auto"},
+                {"width": 1600, "height": 1200, "crop": "limit"},
+                {"quality": "auto:good"},
                 {"fetch_format": "auto"},
             ],
         )
@@ -54,21 +45,12 @@ async def upload_image(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-async def upload_video(
-    file: UploadFile,
-    folder: str,
-    public_id: str = None,
-) -> dict:
+async def upload_video(file: UploadFile, folder: str, public_id: str = None) -> dict:
     if file.content_type not in ALLOWED_VIDEO_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid video type. Allowed: mp4, mov, webm",
-        )
-
+        raise HTTPException(status_code=400, detail="Invalid video type. Allowed: mp4, mov, webm")
     contents = await file.read()
     if len(contents) > MAX_VIDEO_SIZE:
         raise HTTPException(status_code=400, detail="Video too large. Max 100MB.")
-
     try:
         result = cloudinary.uploader.upload(
             contents,
@@ -76,10 +58,7 @@ async def upload_video(
             folder=f"car-dealer-app/{folder}",
             public_id=public_id,
             overwrite=True,
-            transformation=[
-                {"duration": "30", "crop": "limit"},
-                {"quality": "auto"},
-            ],
+            # No duration crop — upload full video
         )
         return {
             "url": result["secure_url"],
@@ -90,21 +69,14 @@ async def upload_video(
         raise HTTPException(status_code=500, detail=f"Video upload failed: {str(e)}")
 
 
-async def upload_document(
-    file: UploadFile,
-    folder: str,
-    public_id: str = None,
-) -> dict:
+async def upload_document(file: UploadFile, folder: str, public_id: str = None) -> dict:
     allowed = {"image/jpeg", "image/png", "application/pdf"}
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Allowed: JPG, PNG, PDF")
-
     contents = await file.read()
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(status_code=400, detail="File too large. Max 10MB.")
-
     resource_type = "raw" if file.content_type == "application/pdf" else "image"
-
     try:
         result = cloudinary.uploader.upload(
             contents,
