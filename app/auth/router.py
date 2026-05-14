@@ -58,9 +58,6 @@ async def register(data: RegisterRequest):
     existing_username = await db["users"].find_one({"username": data.username.lower()})
     if existing_username:
         raise HTTPException(status_code=400, detail="Username already taken")
-    # Dealers start as pending_setup — they CAN login to complete setup
-    # After setup they become awaiting_approval for admin review
-    # All other roles go straight to active
     status_val = "pending_setup" if data.role == "DEALER_ADMIN" else "active"
     user_doc = {
         "userId": gen_user_id(),
@@ -89,8 +86,6 @@ async def login(data: LoginRequest):
     if not verify_password(data.password, user["passwordHash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     user_status = user.get("status", "active")
-    # ONLY block suspended or deleted accounts
-    # pending_setup, awaiting_approval, pending — all CAN login
     if user_status == "suspended":
         raise HTTPException(status_code=403, detail="Account suspended. Contact support.")
     if user_status == "deleted":
@@ -129,6 +124,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     db = get_db()
     uid = str(current_user["_id"])
     result = serialize_doc(current_user)
+    result.pop("passwordHash", None)
     if current_user.get("role") == "DEALER_ADMIN":
         dealer = await db["dealer_organizations"].find_one({"userId": uid})
         if dealer:
@@ -141,26 +137,57 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/change-password")
-async def change_password(data: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+):
     db = get_db()
     if not verify_password(data.currentPassword, current_user["passwordHash"]):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     if len(data.newPassword) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
-    await db["users"].update_one({"_id": ObjectId(str(current_user["_id"]))}, {"$set": {"passwordHash": hash_password(data.newPassword), "updatedAt": datetime.utcnow()}})
+    new_hash = hash_password(data.newPassword)
+    await db["users"].update_one(
+        {"_id": ObjectId(str(current_user["_id"]))},
+        {"$set": {"passwordHash": new_hash, "updatedAt": datetime.utcnow()}},
+    )
     return {"message": "Password changed successfully"}
 
 
 @router.post("/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest):
+    """
+    Reset password and save the hash to DB so user CAN login with the new password.
+    Returns tempPassword in response AND saves it via in-app notification.
+    """
     db = get_db()
     user = await db["users"].find_one({"email": data.email.lower()})
     if not user:
         return {"message": "If this email is registered, a temporary password has been sent."}
+
     temp_password = "Temp@" + "".join(random.choices(string.digits, k=6))
-    await db["users"].update_one({"_id": user["_id"]}, {"$set": {"passwordHash": hash_password(temp_password), "updatedAt": datetime.utcnow()}})
-    await db["notifications"].insert_one({"receiverId": str(user["_id"]), "type": "general", "title": "Password Reset", "message": "Your temporary password is: " + temp_password + " - Please change it after logging in.", "isRead": False, "createdAt": datetime.utcnow()})
-    return {"message": "Temporary password set successfully", "tempPassword": temp_password}
+
+    # CRITICAL: hash and save to DB so user can actually login with it
+    new_hash = hash_password(temp_password)
+    await db["users"].update_one(
+        {"_id": user["_id"]},
+        {"$set": {"passwordHash": new_hash, "updatedAt": datetime.utcnow()}},
+    )
+
+    # In-app notification
+    await db["notifications"].insert_one({
+        "receiverId": str(user["_id"]),
+        "type": "general",
+        "title": "Password Reset",
+        "message": f"Your temporary password is: {temp_password} — Please change it after logging in.",
+        "isRead": False,
+        "createdAt": datetime.utcnow(),
+    })
+
+    return {
+        "message": "Temporary password set. Use it to login, then change it from settings.",
+        "tempPassword": temp_password,
+    }
 
 
 @router.post("/refresh")
@@ -194,30 +221,59 @@ async def forgot_password_options(data: ForgotPasswordOptions):
     options = []
     whatsapp = user.get("whatsapp") or user.get("phone")
     if whatsapp and len(whatsapp) >= 4:
-        options.append({"type": "whatsapp", "label": "Send to WhatsApp", "masked": "WhatsApp ending in ****" + whatsapp[-4:]})
+        options.append({"type": "whatsapp", "label": "WhatsApp OTP", "masked": "WhatsApp ending in ****" + whatsapp[-4:]})
     email = user.get("email", "")
     if "@" in email:
         parts = email.split("@")
-        masked_name = parts[0][:2] + "****" if len(parts[0]) > 2 else "****"
-        options.append({"type": "email", "label": "Send to Email", "masked": masked_name + "@" + parts[1]})
-    options.append({"type": "admin_message", "label": "Contact Admin Directly", "masked": "Send a recovery request to CARSTRIMS admin for identity verification"})
+        masked = parts[0][:2] + "****" if len(parts[0]) > 2 else "****"
+        options.append({"type": "email", "label": "Email Reset Link", "masked": masked + "@" + parts[1]})
+    options.append({"type": "admin_message", "label": "Contact Admin", "masked": "Send a recovery request to CARSTRIMS admin"})
     return {"options": options}
 
 
 @router.post("/forgot-password/send")
 async def forgot_password_send(data: ForgotPasswordSend):
+    """Reset password and save hash to DB regardless of method."""
     import secrets
     db = get_db()
     user = await db["users"].find_one({"email": data.email.lower()})
+
     if data.method == "admin_message":
         admins = await db["users"].find({"role": "SYSTEM_ADMIN"}).to_list(5)
         for admin in admins:
-            await db["notifications"].insert_one({"receiverId": str(admin["_id"]), "type": "password_recovery", "title": "Password Recovery Request", "message": "User with email " + data.email + " has requested password recovery.", "isRead": False, "data": {"email": data.email}, "createdAt": datetime.utcnow()})
+            await db["notifications"].insert_one({
+                "receiverId": str(admin["_id"]),
+                "type": "password_recovery",
+                "title": "Password Recovery Request",
+                "message": f"User {data.email} has requested password recovery. Use !password in their chat to reset.",
+                "isRead": False,
+                "data": {"email": data.email},
+                "createdAt": datetime.utcnow(),
+            })
         return {"message": "Recovery request sent to admin"}
+
     if not user:
         return {"message": "Recovery sent if account exists"}
-    if data.method in ("whatsapp", "email"):
-        reset_token = secrets.token_urlsafe(32)
-        await db["password_reset_tokens"].insert_one({"userId": str(user["_id"]), "email": user["email"], "token": reset_token, "createdAt": datetime.utcnow(), "used": False})
-        await db["notifications"].insert_one({"receiverId": str(user["_id"]), "type": "password_recovery", "title": "Password Recovery Requested", "message": "Someone requested a password reset via " + data.method + ".", "isRead": False, "data": {"token": reset_token, "method": data.method}, "createdAt": datetime.utcnow()})
-    return {"message": "Recovery instructions sent via " + data.method}
+
+    # Generate temp password and SAVE HASH to DB
+    temp_password = "Reset@" + "".join(random.choices(string.ascii_letters + string.digits, k=8))
+    new_hash = hash_password(temp_password)
+    await db["users"].update_one(
+        {"_id": user["_id"]},
+        {"$set": {"passwordHash": new_hash, "updatedAt": datetime.utcnow()}},
+    )
+
+    # In-app notification with the password
+    await db["notifications"].insert_one({
+        "receiverId": str(user["_id"]),
+        "type": "password_recovery",
+        "title": "Password Reset",
+        "message": f"Your new temporary password is: {temp_password}\n\nPlease log in and change it immediately from your profile settings.",
+        "isRead": False,
+        "createdAt": datetime.utcnow(),
+    })
+
+    return {
+        "message": f"Temporary password set. Check your in-app notifications to get it.",
+        "note": "In production this sends via " + data.method,
+    }
