@@ -1,5 +1,5 @@
 ﻿from fastapi import APIRouter, Depends, Query, Body, UploadFile, File
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
 from app.modules.dealers.service import serialize_doc
@@ -27,29 +27,38 @@ class BroadcastRequest(BaseModel):
     title: str
     message: str
     targetRole: str = "all"
+    targetUserIds: Optional[List[str]] = None   # specific users
     documentUrl: Optional[str] = None
     documentName: Optional[str] = None
+    documentType: Optional[str] = None           # "image" | "video" | "document"
 
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 
 
-# ── STATS ─────────────────────────────────────────────────────────────────────
-
+# ── STATS (corrected role counts) ────────────────────────────
 @router.get("/stats")
 async def get_stats(admin=Depends(require_admin)):
     db = get_db()
-    total_dealers = await db["dealer_organizations"].count_documents({})
-    active_dealers = await db["dealer_organizations"].count_documents({"status": "approved"})
-    pending_dealers = await db["dealer_organizations"].count_documents({"status": "awaiting_approval"})
-    suspended_dealers = await db["dealer_organizations"].count_documents({"status": "suspended"})
-    total_users = await db["users"].count_documents({})
-    total_cars = await db["car_listings"].count_documents({})
-    total_sold = await db["car_listings"].count_documents({"status": "sold"})
-    total_staff = await db["staff_accounts"].count_documents({})
+    total_dealers    = await db["dealer_organizations"].count_documents({})
+    active_dealers   = await db["dealer_organizations"].count_documents({"status": "approved"})
+    pending_dealers  = await db["dealer_organizations"].count_documents({"status": "awaiting_approval"})
+    suspended_dealers= await db["dealer_organizations"].count_documents({"status": "suspended"})
+
+    # Correct role-based user counts
+    total_users      = await db["users"].count_documents({})
+    buyers_only      = await db["users"].count_documents({"role": "PUBLIC_USER"})
+    partners_only    = await db["users"].count_documents({"role": "PARTNER_USER"})
+    staff_only       = await db["users"].count_documents({"role": "DEALER_STAFF"})
+    dealer_admins    = await db["users"].count_documents({"role": "DEALER_ADMIN"})
+
+    total_cars  = await db["car_listings"].count_documents({})
+    total_sold  = await db["car_listings"].count_documents({"status": "sold"})
+
     rev = await db["sale_transactions"].aggregate([
         {"$group": {"_id": None, "total": {"$sum": "$sellingPrice"}, "count": {"$sum": 1}}}
     ]).to_list(1)
+
     now = datetime.utcnow()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     month_dealers = await db["dealer_organizations"].count_documents({"createdAt": {"$gte": month_start}})
@@ -57,13 +66,20 @@ async def get_stats(admin=Depends(require_admin)):
         {"$match": {"soldAt": {"$gte": month_start}}},
         {"$group": {"_id": None, "total": {"$sum": "$sellingPrice"}, "count": {"$sum": 1}}},
     ]).to_list(1)
+
     return {
         "dealers": {
             "total": total_dealers, "active": active_dealers,
             "pending": pending_dealers, "suspended": suspended_dealers,
             "thisMonth": month_dealers,
         },
-        "users": {"total": total_users, "staff": total_staff},
+        "users": {
+            "total": total_users,
+            "buyers": buyers_only,
+            "partners": partners_only,
+            "staff": staff_only,
+            "dealerAdmins": dealer_admins,
+        },
         "inventory": {"totalCars": total_cars, "totalSold": total_sold},
         "revenue": {
             "allTime": rev[0]["total"] if rev else 0,
@@ -74,20 +90,17 @@ async def get_stats(admin=Depends(require_admin)):
     }
 
 
-# ── DEALERS ───────────────────────────────────────────────────────────────────
-
+# ── DEALERS ───────────────────────────────────────────────────
 @router.get("/dealers")
 async def list_dealers(
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    skip: int = Query(0),
-    limit: int = Query(20),
+    skip: int = Query(0), limit: int = Query(20),
     admin=Depends(require_admin),
 ):
     db = get_db()
     query = {}
-    if status and status != "all":
-        query["status"] = status
+    if status and status != "all": query["status"] = status
     if search:
         query["$or"] = [
             {"companyName": {"$regex": search, "$options": "i"}},
@@ -139,8 +152,8 @@ async def reject_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(req
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "rejected"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Application Rejected",
-        "message": reason, "isRead": False, "createdAt": datetime.utcnow(),
+        "title": "Application Rejected", "message": reason,
+        "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Dealer rejected"}
 
@@ -158,8 +171,8 @@ async def suspend_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(re
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "suspended"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Suspended ⛔",
-        "message": note, "isRead": False, "createdAt": datetime.utcnow(),
+        "title": "Account Suspended ⛔", "message": note,
+        "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Dealer suspended"}
 
@@ -176,8 +189,8 @@ async def warn_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(requi
     await db["dealer_organizations"].update_one(q, {"$set": {"warningNote": note, "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Warning ⚠️",
-        "message": note, "isRead": False, "createdAt": datetime.utcnow(),
+        "title": "Account Warning ⚠️", "message": note,
+        "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Warning sent"}
 
@@ -205,20 +218,17 @@ async def reset_dealer_password(user_id: str, data: dict = Body({}), admin=Depen
     return {"message": "Password reset", "newPassword": new_password}
 
 
-# ── USERS ─────────────────────────────────────────────────────────────────────
-
+# ── USERS ──────────────────────────────────────────────────────
 @router.get("/users")
 async def list_users(
     role: Optional[str] = Query(None),
-    skip: int = Query(0),
-    limit: int = Query(20),
+    skip: int = Query(0), limit: int = Query(20),
     search: Optional[str] = Query(None),
     admin=Depends(require_admin),
 ):
     db = get_db()
     query: dict = {}
-    if role and role != "all":
-        query["role"] = role
+    if role and role != "all": query["role"] = role
     if search:
         query["$or"] = [
             {"fullName": {"$regex": search, "$options": "i"}},
@@ -242,8 +252,8 @@ async def suspend_user(user_id: str, data: dict = Body({}), admin=Depends(requir
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "suspended", "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Suspended ⛔",
-        "message": reason, "isRead": False, "createdAt": datetime.utcnow(),
+        "title": "Account Suspended ⛔", "message": reason,
+        "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "User suspended"}
 
@@ -267,8 +277,8 @@ async def warn_user(user_id: str, data: dict = Body({}), admin=Depends(require_a
     reason = data.get("reason", "Please review your account activity.")
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Warning ⚠️",
-        "message": reason, "isRead": False, "createdAt": datetime.utcnow(),
+        "title": "Account Warning ⚠️", "message": reason,
+        "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Warning sent"}
 
@@ -289,194 +299,139 @@ async def reset_user_password(user_id: str, data: dict = Body({}), admin=Depends
     return {"message": "Password reset", "newPassword": new_password}
 
 
-@router.post("/users/send-password")
-async def send_password_to_user(data: dict = Body({}), admin=Depends(require_admin)):
-    db = get_db()
-    user_id = data.get("userId")
-    new_password = data.get("newPassword")
-    method = data.get("method", "email")
-    user = await db["users"].find_one({"_id": ObjectId(user_id)}) if user_id and ObjectId.is_valid(user_id) else None
-    if not user:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="User not found")
-    await db["notifications"].insert_one({
-        "receiverId": user_id, "type": "general",
-        "title": "Password Reset by Admin",
-        "message": f"Your password has been reset. New password: {new_password}\n\nPlease log in and change it immediately.",
-        "isRead": False, "createdAt": datetime.utcnow(),
-    })
-    return {"message": f"Password sent via {method}"}
-
-
-# ── CAR LISTING MODERATION (super admin) ──────────────────────────────────────
-# DELETE /api/v1/admin/cars/{car_id}
-# Called when super admin clicks "Delete Post" on the car detail page
-
+# ── CAR MODERATION ────────────────────────────────────────────
 @router.delete("/cars/{car_id}")
 async def admin_delete_car(car_id: str, admin=Depends(require_admin)):
     db = get_db()
-
-    # Find by carId string or MongoDB ObjectId
-    if ObjectId.is_valid(car_id):
-        query = {"_id": ObjectId(car_id)}
-    else:
-        query = {"carId": car_id}
-
+    query = {"_id": ObjectId(car_id)} if ObjectId.is_valid(car_id) else {"carId": car_id}
     car = await db["car_listings"].find_one(query)
     if not car:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Car listing not found")
-
-    # Log the deletion for audit trail
     await db["admin_deletion_logs"].insert_one({
-        "type": "car_listing",
-        "carId": car.get("carId"),
-        "brand": car.get("brand"),
-        "model": car.get("model"),
-        "dealerId": car.get("dealerId"),
-        "deletedBy": str(admin["_id"]),
-        "deletedAt": datetime.utcnow(),
-        "reason": "Admin moderation",
+        "type": "car_listing", "carId": car.get("carId"),
+        "brand": car.get("brand"), "model": car.get("model"),
+        "dealerId": car.get("dealerId"), "deletedBy": str(admin["_id"]),
+        "deletedAt": datetime.utcnow(), "reason": "Admin moderation",
     })
-
-    # Delete the car listing
     await db["car_listings"].delete_one({"_id": car["_id"]})
-
-    # Delete all comments on this car
     await db["comments"].delete_many({"carId": car.get("carId")})
-
-    # Update dealer's totalCarsListed count
     if car.get("dealerId") and ObjectId.is_valid(car["dealerId"]):
         await db["dealer_organizations"].update_one(
-            {"_id": ObjectId(car["dealerId"])},
-            {"$inc": {"totalCarsListed": -1}}
+            {"_id": ObjectId(car["dealerId"])}, {"$inc": {"totalCarsListed": -1}}
         )
-
-    # Notify the dealer
-    if car.get("dealerId") and ObjectId.is_valid(car["dealerId"]):
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(car["dealerId"])})
         if dealer and dealer.get("userId"):
             await db["notifications"].insert_one({
-                "receiverId": dealer["userId"],
-                "type": "general",
+                "receiverId": dealer["userId"], "type": "general",
                 "title": "Car Listing Removed",
-                "message": f"Your listing for {car.get('brand','')} {car.get('model','')} ({car.get('carId','')}) was removed by a platform admin.",
-                "isRead": False,
-                "createdAt": datetime.utcnow(),
+                "message": f"Your listing for {car.get('brand','')} {car.get('model','')} was removed by a platform admin.",
+                "isRead": False, "createdAt": datetime.utcnow(),
             })
-
     return {"message": "Car listing deleted", "carId": car.get("carId")}
 
-
-# DELETE /api/v1/admin/cars/{car_id}/comments/{comment_id}
-# Called when super admin deletes someone else's comment
 
 @router.delete("/cars/{car_id}/comments/{comment_id}")
 async def admin_delete_comment(car_id: str, comment_id: str, admin=Depends(require_admin)):
     db = get_db()
-
-    # Try by commentId string or ObjectId
-    if ObjectId.is_valid(comment_id):
-        query = {"_id": ObjectId(comment_id)}
-    else:
-        query = {"commentId": comment_id}
-
-    # Also try by carId to scope the deletion correctly
+    query = {"_id": ObjectId(comment_id)} if ObjectId.is_valid(comment_id) else {"commentId": comment_id}
     comment = await db["comments"].find_one(query)
     if not comment:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Comment not found")
-
     await db["comments"].delete_one({"_id": comment["_id"]})
-
     return {"message": "Comment deleted"}
 
 
-# ── POSTS / COMMENTS ──────────────────────────────────────────────────────────
-
-@router.get("/posts")
-async def list_posts(
-    skip: int = Query(0),
-    limit: int = Query(20),
-    admin=Depends(require_admin),
-):
-    db = get_db()
-    total = await db["posts"].count_documents({})
-    posts = await db["posts"].find({}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
-    return {"total": total, "posts": [serialize_doc(p) for p in posts]}
-
-
-@router.delete("/posts/{post_id}")
-async def delete_post(post_id: str, admin=Depends(require_admin)):
-    db = get_db()
-    q = {"_id": ObjectId(post_id)} if ObjectId.is_valid(post_id) else {"postId": post_id}
-    result = await db["posts"].delete_one(q)
-    await db["comments"].delete_many({"postId": post_id})
-    if result.deleted_count == 0:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Post not found")
-    return {"message": "Post deleted"}
-
-
-@router.delete("/comments/{comment_id}")
-async def delete_comment(comment_id: str, admin=Depends(require_admin)):
-    db = get_db()
-    q = {"_id": ObjectId(comment_id)} if ObjectId.is_valid(comment_id) else {"commentId": comment_id}
-    result = await db["comments"].delete_one(q)
-    if result.deleted_count == 0:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Comment not found")
-    return {"message": "Comment deleted"}
-
-
-# ── BROADCAST ─────────────────────────────────────────────────────────────────
-
+# ── BROADCAST (with specific user targeting + video) ──────────
 @router.post("/broadcast")
 async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     db = get_db()
     admin_id = str(admin["_id"])
-    query: dict = {}
-    if data.targetRole != "all":
-        query["role"] = data.targetRole
-    users = await db["users"].find(query, {"_id": 1}).to_list(50000)
-    user_ids = [str(u["_id"]) for u in users]
     now = datetime.utcnow()
     broadcast_id = "BCAST-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
     system_user = await db["users"].find_one({"role": "SYSTEM_ADMIN"})
     system_id = str(system_user["_id"]) if system_user else admin_id
-    if user_ids:
-        notif_docs = [
-            {
-                "receiverId": uid, "senderId": system_id, "type": "broadcast",
-                "title": data.title, "message": data.message,
-                "documentUrl": data.documentUrl, "documentName": data.documentName,
-                "broadcastId": broadcast_id, "allowReply": False,
-                "isRead": False, "createdAt": now,
-            }
-            for uid in user_ids
-        ]
+
+    # Resolve recipients
+    if data.targetUserIds and len(data.targetUserIds) > 0:
+        user_ids = data.targetUserIds
+    else:
+        query: dict = {}
+        if data.targetRole != "all":
+            query["role"] = data.targetRole
+        users = await db["users"].find(query, {"_id": 1}).to_list(50000)
+        user_ids = [str(u["_id"]) for u in users]
+
+    if not user_ids:
+        return {"message": "No recipients found", "sentTo": 0}
+
+    # Send announcement message to each recipient
+    msg_docs = []
+    conv_docs = []
+    notif_docs = []
+
+    for uid in user_ids:
+        conv_id = f"BCAST-{broadcast_id}-{uid[-8:]}"
+        msg_docs.append({
+            "messageId": "MSG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=10)),
+            "conversationId": conv_id,
+            "senderId": system_id,
+            "receiverId": uid,
+            "type": "announcement",
+            "title": data.title,
+            "message": data.message,
+            "attachmentUrl": data.documentUrl,
+            "attachmentName": data.documentName,
+            "attachmentType": data.documentType,  # "image"|"video"|"document"
+            "broadcastId": broadcast_id,
+            "isRead": False,
+            "createdAt": now,
+        })
+        conv_docs.append({
+            "conversationId": conv_id,
+            "participants": [system_id, uid],
+            "type": "announcement",
+            "isBroadcast": True,
+            "lastMessage": data.title,
+            "lastMessageAt": now,
+            "unreadCount": 1,
+            "createdAt": now,
+        })
+        notif_docs.append({
+            "receiverId": uid, "senderId": system_id,
+            "type": "announcement",
+            "title": data.title,
+            "message": data.message[:120],
+            "attachmentUrl": data.documentUrl,
+            "broadcastId": broadcast_id,
+            "isRead": False,
+            "createdAt": now,
+        })
+
+    if msg_docs:
+        await db["messages"].insert_many(msg_docs)
+    if conv_docs:
+        await db["conversations"].insert_many(conv_docs)
+    if notif_docs:
         await db["notifications"].insert_many(notif_docs)
-    for uid in user_ids[:500]:
-        conv_id = f"BCAST-{broadcast_id}-{uid[-6:]}"
-        await db["conversations"].insert_one({
-            "conversationId": conv_id, "participants": [system_id, uid],
-            "type": "broadcast", "isBroadcast": True, "allowReply": False,
-            "lastMessage": data.message, "lastMessageAt": now, "createdAt": now,
-        })
-        await db["messages"].insert_one({
-            "messageId": "MSG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8)),
-            "conversationId": conv_id, "senderId": system_id, "receiverId": uid,
-            "message": data.message, "documentUrl": data.documentUrl, "documentName": data.documentName,
-            "isBroadcast": True, "allowReply": False, "isRead": False, "createdAt": now,
-        })
+
     await db["broadcasts"].insert_one({
-        "broadcastId": broadcast_id, "adminId": admin_id, "title": data.title,
-        "message": data.message, "targetRole": data.targetRole, "recipientCount": len(user_ids),
-        "documentUrl": data.documentUrl, "documentName": data.documentName, "sentAt": now,
+        "broadcastId": broadcast_id, "adminId": admin_id,
+        "title": data.title, "message": data.message,
+        "targetRole": data.targetRole,
+        "targetUserIds": data.targetUserIds or [],
+        "recipientCount": len(user_ids),
+        "attachmentUrl": data.documentUrl,
+        "attachmentName": data.documentName,
+        "attachmentType": data.documentType,
+        "sentAt": now,
     })
+
     return {
         "message": f"Broadcast sent to {len(user_ids)} users",
-        "broadcastId": broadcast_id, "sentTo": len(user_ids), "recipientCount": len(user_ids),
+        "broadcastId": broadcast_id,
+        "sentTo": len(user_ids),
     }
 
 
@@ -488,28 +443,41 @@ async def get_broadcasts(skip: int = Query(0), limit: int = Query(20), admin=Dep
     return {"total": total, "broadcasts": [serialize_doc(d) for d in docs]}
 
 
-# ── UPLOAD ────────────────────────────────────────────────────────────────────
-
+# ── UPLOAD (image, video, document) ──────────────────────────
 @router.post("/upload/document")
-async def upload_broadcast_document(file: UploadFile = File(...), admin=Depends(require_admin)):
+async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depends(require_admin)):
     try:
         content = await file.read()
-        is_image = file.content_type and file.content_type.startswith("image/")
-        resource_type = "image" if is_image else "raw"
+        content_type = file.content_type or ""
+        if content_type.startswith("image/"):
+            resource_type = "image"
+            doc_type = "image"
+        elif content_type.startswith("video/"):
+            resource_type = "video"
+            doc_type = "video"
+        else:
+            resource_type = "raw"
+            doc_type = "document"
+
         result = cloudinary.uploader.upload(
             content, resource_type=resource_type,
-            folder="carstrims/broadcast-docs",
-            public_id=f"doc-{datetime.utcnow().timestamp()}",
+            folder="carstrims/broadcast-attachments",
             use_filename=True,
         )
-        return {"url": result["secure_url"], "name": file.filename, "size": len(content), "isImage": is_image}
+        return {
+            "url": result["secure_url"],
+            "name": file.filename,
+            "size": len(content),
+            "type": doc_type,         # "image" | "video" | "document"
+            "isImage": doc_type == "image",
+            "isVideo": doc_type == "video",
+        }
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
 
 
-# ── ANALYTICS ─────────────────────────────────────────────────────────────────
-
+# ── ANALYTICS ─────────────────────────────────────────────────
 @router.get("/growth")
 async def analytics_growth(admin=Depends(require_admin)):
     db = get_db()
@@ -519,8 +487,7 @@ async def analytics_growth(admin=Depends(require_admin)):
         month_offset = now.month - i
         year = now.year
         while month_offset <= 0:
-            month_offset += 12
-            year -= 1
+            month_offset += 12; year -= 1
         start = datetime(year, month_offset, 1)
         end = datetime(year + 1, 1, 1) if month_offset == 12 else datetime(year, month_offset + 1, 1)
         label = start.strftime("%b")
@@ -544,9 +511,7 @@ async def top_dealers(limit: int = Query(10), admin=Depends(require_admin)):
     dealers = await db["dealer_organizations"].find({"status": "approved"}).sort("totalCarsSold", -1).limit(limit).to_list(limit)
     result = []
     for i, d in enumerate(dealers):
-        s = serialize_doc(d)
-        s["rank"] = i + 1
-        result.append(s)
+        s = serialize_doc(d); s["rank"] = i + 1; result.append(s)
     return result
 
 
@@ -557,8 +522,7 @@ async def activity_log(skip: int = Query(0), limit: int = Query(50), admin=Depen
     return {"activities": [serialize_doc(d) for d in docs]}
 
 
-# ── CREATE DEALER ─────────────────────────────────────────────────────────────
-
+# ── CREATE DEALER ─────────────────────────────────────────────
 @router.post("/create-dealer")
 async def create_dealer_account(data: dict = Body(...), admin=Depends(require_admin)):
     from app.auth.password import hash_password
