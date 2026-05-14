@@ -136,6 +136,15 @@ async def approve_dealer(dealer_id: str, admin=Depends(require_admin)):
         "message": "Your dealership has been approved. You now have full access to your dashboard.",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+    # Send real email + WhatsApp notification
+    try:
+        user_obj = await db["users"].find_one({"_id": ObjectId(dealer["userId"])})
+        if user_obj:
+            from app.services.notifications import notify_dealer_approved
+            import asyncio
+            asyncio.create_task(notify_dealer_approved(dealer, user_obj))
+    except Exception:
+        pass
     return {"message": "Dealer approved"}
 
 
@@ -554,3 +563,4 @@ async def create_dealer_account(data: dict = Body(...), admin=Depends(require_ad
     dealer_result = await db["dealer_organizations"].insert_one(dealer_doc)
     await db["users"].update_one({"_id": user_result.inserted_id}, {"$set": {"dealerId": str(dealer_result.inserted_id)}})
     return {"message": "Dealer created", "dealerId": dealer_doc["dealerId"], "email": email, "tempPassword": password}
+

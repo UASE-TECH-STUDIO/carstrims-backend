@@ -107,3 +107,4 @@ async def remove_car(
 
     await db["car_listings"].delete_one({"_id": car["_id"]})
     return {"message": "Car deleted", "carId": car.get("carId")}
+
