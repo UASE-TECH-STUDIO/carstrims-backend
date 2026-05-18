@@ -128,3 +128,28 @@ async def dealer_followers(
     total = await db["follows"].count_documents({"dealerId": dealer_mongo_id})
     follows = await db["follows"].find({"dealerId": dealer_mongo_id}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
     return {"total": total, "followers": [serialize_doc(f) for f in follows]}
+
+
+@router.get("/{dealer_id}/followers/public")
+async def dealer_followers_public(dealer_id: str, skip: int = Query(0), limit: int = Query(50)):
+    """Public follower count + list — no auth required."""
+    db = get_db()
+    if ObjectId.is_valid(dealer_id):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
+    else:
+        dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+    if not dealer:
+        return {"total": 0, "followers": []}
+    dealer_mongo_id = str(dealer["_id"])
+    total = await db["follows"].count_documents({"dealerId": dealer_mongo_id})
+    follows = await db["follows"].find({"dealerId": dealer_mongo_id}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+    enriched = []
+    for f in follows:
+        user = await db["users"].find_one({"_id": ObjectId(f["userId"])}) if ObjectId.is_valid(f.get("userId","")) else None
+        enriched.append({
+            "userId": f.get("userId"),
+            "fullName": f.get("userName") or (user.get("fullName") if user else "User"),
+            "avatar": user.get("avatar") or user.get("profilePicture") if user else None,
+            "role": user.get("role") if user else "PUBLIC_USER",
+        })
+    return {"total": total, "followers": enriched}

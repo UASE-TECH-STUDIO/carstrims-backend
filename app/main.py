@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database.connection import connect_db, close_db
@@ -19,6 +19,15 @@ from app.modules.users.admin_router import router as admin_router
 from app.modules.notifications.push_router import router as push_router
 from app.modules.users.user_router import router as user_router
 from app.modules.messages.router import router as messages_router
+try:
+    from app.modules.follows.router import router as follows_router
+    _has_follows = True
+except Exception:
+    try:
+        from app.follows_router import router as follows_router
+        _has_follows = True
+    except Exception:
+        _has_follows = False
 
 
 @asynccontextmanager
@@ -35,11 +44,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS — allow all origins in production ──────────────────────────────────
+# â”€â”€ CORS â€” allow all origins in production â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # We allow all because Vercel preview deployments have dynamic URLs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],           # Allow everything — JWT handles auth security
+    allow_origins=["*"],           # Allow everything â€” JWT handles auth security
     allow_credentials=False,       # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +71,8 @@ app.include_router(admin_router)
 app.include_router(user_router)
 app.include_router(push_router)
 app.include_router(messages_router)
+if _has_follows:
+    app.include_router(follows_router)
 
 
 @app.get("/")
@@ -81,3 +92,4 @@ async def health():
 @app.get("/ping")
 async def ping():
     return {"pong": True}
+

@@ -18,3 +18,15 @@ async def dealer_reports(
 @router.get("/admin/platform")
 async def platform_reports(current_user: dict = Depends(get_current_admin)):
     return await get_admin_platform_reports()
+
+
+@router.get("/dealer/car/{car_id}")
+async def dealer_car_report(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Full per-car financial report."""
+    from app.modules.dealers.service import get_dealer_by_user_id
+    from app.modules.cars.sale_service import get_car_financial_report
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await get_car_financial_report(dealer["_id"], car_id)

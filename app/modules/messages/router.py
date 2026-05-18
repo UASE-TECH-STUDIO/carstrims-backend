@@ -262,3 +262,102 @@ async def search_users(
         }
         for u in users
     ]
+
+
+@router.post("/conversation/{conv_id}/upload-attachment")
+async def upload_chat_attachment(
+    conv_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Upload any file type in a chat: image, video, or document.
+    Returns url, name, size and type for the frontend to send as a message.
+    """
+    try:
+        content = await file.read()
+        content_type = file.content_type or ""
+
+        if content_type.startswith("image/"):
+            resource_type = "image"
+            att_type = "image"
+        elif content_type.startswith("video/"):
+            resource_type = "video"
+            att_type = "video"
+        else:
+            resource_type = "raw"
+            att_type = "document"
+
+        result = cloudinary.uploader.upload(
+            content,
+            resource_type=resource_type,
+            folder="carstrims/chat-attachments",
+            use_filename=True,
+        )
+
+        return {
+            "url": result["secure_url"],
+            "name": file.filename,
+            "size": len(content),
+            "type": att_type,     # "image" | "video" | "document"
+            "isImage": att_type == "image",
+            "isVideo": att_type == "video",
+        }
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+
+@router.post("/conversation/{conv_id}/send-with-attachment")
+async def send_message_with_attachment(
+    conv_id: str,
+    current_user: dict = Depends(get_current_user),
+    message: str = "",
+    receiverId: str = "",
+    attachmentUrl: str = "",
+    attachmentName: str = "",
+    attachmentType: str = "image",
+):
+    """Send a message that includes an attachment URL (already uploaded)."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    now = datetime.utcnow()
+
+    receiver_id = receiverId
+    if receiver_id and not ObjectId.is_valid(receiver_id):
+        recv_user = await db["users"].find_one({"userId": receiver_id})
+        if recv_user:
+            receiver_id = str(recv_user["_id"])
+
+    msg_doc = {
+        "messageId": gen_msg_id(),
+        "conversationId": conv_id,
+        "senderId": uid,
+        "receiverId": receiver_id,
+        "message": message or ("📷 Photo" if attachmentType == "image" else "🎥 Video" if attachmentType == "video" else "📄 Document"),
+        "attachmentUrl": attachmentUrl,
+        "attachmentName": attachmentName,
+        "attachmentType": attachmentType,
+        "isRead": False,
+        "createdAt": now,
+    }
+    await db["messages"].insert_one(msg_doc)
+    await db["conversations"].update_one(
+        {"conversationId": conv_id},
+        {"$set": {
+            "lastMessage": msg_doc["message"],
+            "lastMessageAt": now,
+        }},
+    )
+    if receiver_id:
+        await db["notifications"].insert_one({
+            "receiverId": receiver_id,
+            "senderId": uid,
+            "type": "message",
+            "title": f"New message from {current_user.get('fullName','Someone')}",
+            "message": msg_doc["message"],
+            "isRead": False,
+            "data": {"conversationId": conv_id},
+            "createdAt": now,
+        })
+    return serialize_doc(msg_doc)

@@ -108,3 +108,38 @@ async def remove_car(
     await db["car_listings"].delete_one({"_id": car["_id"]})
     return {"message": "Car deleted", "carId": car.get("carId")}
 
+
+
+# ── MARK CAR AS SOLD (from inventory or car detail) ──────────
+from pydantic import BaseModel as _PBM
+from typing import Optional as _Opt
+
+class SaleEntryRequest(_PBM):
+    sellingPrice: float
+    purchasePrice: _Opt[float] = None
+    buyerName: _Opt[str] = None
+    buyerPhone: _Opt[str] = None
+    buyerEmail: _Opt[str] = None
+    paymentMethod: _Opt[str] = "cash"
+    notes: _Opt[str] = None
+
+@router.post("/{car_id}/mark-sold")
+async def mark_car_sold_endpoint(
+    car_id: str,
+    data: SaleEntryRequest,
+    current_user: dict = Depends(get_current_dealer),
+):
+    from app.modules.dealers.service import get_dealer_by_user_id
+    from app.modules.cars.sale_service import mark_car_sold
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await mark_car_sold(dealer["_id"], str(current_user["_id"]), car_id, data.model_dump())
+
+@router.get("/{car_id}/financial-report")
+async def car_financial_report(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    from app.modules.dealers.service import get_dealer_by_user_id
+    from app.modules.cars.sale_service import get_car_financial_report
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await get_car_financial_report(dealer["_id"], car_id)

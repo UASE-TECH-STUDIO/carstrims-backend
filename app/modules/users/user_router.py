@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Body
+﻿from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -88,7 +88,7 @@ async def update_profile(data: ProfileUpdate, current_user: dict = Depends(get_c
     return s
 
 
-# ── FAVORITES — unified "favorites" collection ────────────────
+# â”€â”€ FAVORITES â€” unified "favorites" collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.get("/favorites")
 async def get_favorites(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -146,7 +146,7 @@ async def get_likes(current_user: dict = Depends(get_current_user)):
     return [l["carId"] for l in likes]
 
 
-# ── REQUESTS ──────────────────────────────────────────────────
+# â”€â”€ REQUESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.get("/requests")
 async def get_requests(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -187,7 +187,7 @@ async def create_request(data: RequestCreate, current_user: dict = Depends(get_c
     return serialize_doc(doc)
 
 
-# ── APPOINTMENTS ──────────────────────────────────────────────
+# â”€â”€ APPOINTMENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @router.get("/appointments")
 async def get_appointments(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -237,3 +237,43 @@ async def create_appointment(data: AppointmentCreate, current_user: dict = Depen
             "isRead": False, "createdAt": datetime.utcnow(),
         })
     return serialize_doc(doc)
+
+
+@router.get("/requests/dealer")
+async def get_dealer_requests_for_user(current_user: dict = Depends(get_current_user)):
+    """
+    For dealer admins: returns ALL pending requests (both dealer-specific and general).
+    For regular users: returns their own requests.
+    """
+    db = get_db()
+    uid = str(current_user["_id"])
+    role = current_user.get("role", "")
+
+    if role == "DEALER_ADMIN":
+        from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
+        try:
+            dealer = await get_dealer_by_user_id(uid)
+            dealer_id = dealer["_id"]
+            reqs = await db["special_requests"].find({
+                "$or": [
+                    {"dealerId": dealer_id, "status": "pending"},
+                    {"dealerId": None, "status": "pending"},
+                    {"dealerId": {"$exists": False}, "status": "pending"},
+                ]
+            }).sort("createdAt", -1).to_list(100)
+        except Exception:
+            reqs = []
+    else:
+        reqs = await db["car_requests"].find({"userId": uid}).sort("createdAt", -1).to_list(50)
+
+    result = []
+    for r in reqs:
+        from app.modules.dealers.service import serialize_doc
+        s = serialize_doc(r)
+        if r.get("userId") and ObjectId.is_valid(r["userId"]):
+            requester = await db["users"].find_one({"_id": ObjectId(r["userId"])})
+            if requester:
+                s["userName"] = requester.get("fullName")
+                s["userPhone"] = requester.get("phone")
+        result.append(s)
+    return result

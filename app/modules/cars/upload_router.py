@@ -252,3 +252,31 @@ async def upload_generic_document(
         public_id=f"doc-{uuid.uuid4().hex[:12]}",
     )
     return {"message": "Document uploaded", "url": result["url"]}
+
+
+@router.post("/api/v1/upload/dealer/logo")
+async def upload_dealer_logo(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload/replace dealer logo from the overview page."""
+    try:
+        content = await file.read()
+        result = cloudinary.uploader.upload(
+            content,
+            resource_type="image",
+            folder="carstrims/dealer-logos",
+            transformation=[{"width": 400, "height": 400, "crop": "fill", "gravity": "face"}],
+        )
+        logo_url = result["secure_url"]
+        # Update dealer record
+        db = get_db()
+        uid = str(current_user["_id"])
+        await db["dealer_organizations"].update_one(
+            {"userId": uid},
+            {"$set": {"logo": logo_url, "updatedAt": datetime.utcnow()}},
+        )
+        return {"logo": logo_url, "url": logo_url}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")

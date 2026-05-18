@@ -3,6 +3,19 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # ── Email (SMTP) ──
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASS: str = ""
+    FROM_EMAIL: str = ""
+
+    # ── Twilio (SMS + WhatsApp) ──
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
+    TWILIO_WHATSAPP_FROM: str = "whatsapp:+14155238886"
+
     APP_NAME: str = "CARSTRIMS"
     DEBUG: bool = False
     FRONTEND_URL: str = "https://carstrims-app.vercel.app"
@@ -28,3 +41,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
