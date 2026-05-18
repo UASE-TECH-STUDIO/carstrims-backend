@@ -35,10 +35,15 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
     CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
 
+        # ── Web Push (VAPID) ──
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY: str = ""
+
     class Config:
         env_file = ".env"
         extra = "ignore"
 
 
 settings = Settings()
+
 

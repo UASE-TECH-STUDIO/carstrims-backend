@@ -11,3 +11,4 @@ python-multipart>=0.0.9
 qrcode[pil]>=7.4.2
 pillow>=10.2.0
 httpx>=0.26.0
+pywebpush
