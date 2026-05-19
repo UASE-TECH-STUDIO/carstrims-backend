@@ -254,3 +254,15 @@ async def revert_sale(
         }},
     )
     return {"message": "Sale reverted to previous values"}
+
+
+# ── RECEIPT for a completed sale (called by InvoiceGenerator on Sales page) ───
+@router.get("/sales/{transaction_id}/receipt")
+async def get_sale_receipt(
+    transaction_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Return structured receipt/invoice data for a sale transaction."""
+    from app.modules.cars.sale_service import generate_receipt_data
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await generate_receipt_data(str(dealer["_id"]), transaction_id)
