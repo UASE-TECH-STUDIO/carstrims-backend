@@ -280,3 +280,49 @@ async def upload_dealer_logo(
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
+
+
+# ── DEALER SIGNATURE (for invoices/receipts) ──────────────────────────────────
+@router.post("/dealer/signature")
+async def upload_dealer_signature(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Upload dealer signature — auto-applied to all generated documents."""
+    db = get_db()
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    result = await upload_image(
+        file,
+        folder=f"dealers/{dealer['_id']}/signature",
+        public_id=f"signature-{dealer['_id']}",
+    )
+    await db["dealer_organizations"].update_one(
+        {"_id": ObjectId(dealer["_id"])},
+        {"$set": {"signature": result["url"], "updatedAt": datetime.utcnow()}},
+    )
+    return {"message": "Signature uploaded", "signature": result["url"], "url": result["url"]}
+
+
+# ── DEALER ADMIN PROFILE PICTURE ──────────────────────────────────────────────
+@router.post("/dealer/profile-picture")
+async def upload_dealer_profile_picture(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Upload the dealer admin's personal profile picture (Settings page)."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    result = await upload_image(
+        file,
+        folder=f"users/{uid}/profile",
+        public_id=f"profile-{uid}",
+    )
+    await db["users"].update_one(
+        {"_id": current_user["_id"]},
+        {"$set": {"profilePicture": result["url"], "avatar": result["url"], "updatedAt": datetime.utcnow()}},
+    )
+    await db["dealer_organizations"].update_one(
+        {"userId": uid},
+        {"$set": {"profilePicture": result["url"], "updatedAt": datetime.utcnow()}},
+    )
+    return {"message": "Profile picture uploaded", "profilePicture": result["url"], "url": result["url"]}
