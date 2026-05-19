@@ -143,3 +143,49 @@ async def car_financial_report(
     from app.modules.cars.sale_service import get_car_financial_report
     dealer = await get_dealer_by_user_id(str(current_user["_id"]))
     return await get_car_financial_report(dealer["_id"], car_id)
+
+
+# ── DOCUMENT GENERATION ENDPOINTS ─────────────────────────────────────────────
+
+@router.get("/{car_id}/proforma-invoice")
+async def get_proforma_invoice(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Proforma Invoice: formal quote BEFORE sale is confirmed."""
+    from app.modules.cars.documents_service import generate_proforma_invoice
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await generate_proforma_invoice(str(dealer["_id"]), car_id)
+
+
+@router.get("/{car_id}/invoice")
+async def get_standard_invoice(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Standard Invoice: official bill AFTER car is confirmed/delivered."""
+    from app.modules.cars.documents_service import generate_standard_invoice
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await generate_standard_invoice(str(dealer["_id"]), car_id)
+
+
+@router.get("/{car_id}/receipt")
+async def get_receipt(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Receipt: proof of payment AFTER money has been received."""
+    from app.modules.cars.documents_service import generate_receipt
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await generate_receipt(str(dealer["_id"]), car_id)
+
+
+@router.get("/{car_id}/report")
+async def get_car_report(
+    car_id: str,
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Full car financial report: purchase price, expenses, sale, profit/loss."""
+    from app.modules.cars.sale_service import get_car_financial_report
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    return await get_car_financial_report(str(dealer["_id"]), car_id)

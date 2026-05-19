@@ -251,3 +251,27 @@ async def upload_generic_document(
         public_id=f"doc-{uuid.uuid4().hex[:12]}",
     )
     return {"message": "Document uploaded", "url": result["url"]}
+
+
+# ── DEALER SIGNATURE (for invoices, receipts, reports) ────────────────────────
+@router.post("/dealer/signature")
+async def upload_dealer_signature(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Upload dealer signature image for use on all generated documents."""
+    db = get_db()
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+
+    result = await upload_image(
+        file,
+        folder=f"dealers/{dealer['_id']}/signature",
+        public_id=f"signature-{dealer['_id']}",
+    )
+
+    await db["dealer_organizations"].update_one(
+        {"_id": ObjectId(dealer["_id"])},
+        {"$set": {"signature": result["url"], "updatedAt": datetime.utcnow()}},
+    )
+
+    return {"message": "Signature uploaded", "signature": result["url"]}

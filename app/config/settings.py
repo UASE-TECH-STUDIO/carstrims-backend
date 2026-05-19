@@ -3,19 +3,27 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── Email (SMTP) ──
+    # Email via Resend
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "")
+    RESEND_FROM: str = os.getenv("RESEND_FROM", "CARSTRIMS <onboarding@resend.dev>")
+
+    # Legacy SMTP (not used if Resend is set)
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASS: str = ""
     FROM_EMAIL: str = ""
 
-    # ── Twilio (SMS + WhatsApp) ──
-    TWILIO_ACCOUNT_SID: str = ""
-    TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_PHONE_NUMBER: str = ""
-    TWILIO_WHATSAPP_FROM: str = "whatsapp:+14155238886"
+    # Twilio SMS
+    TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
+    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+    TWILIO_PHONE_NUMBER: str = os.getenv("TWILIO_PHONE_NUMBER", "")
 
+    # Twilio WhatsApp Sandbox
+    TWILIO_WA_FROM: str = os.getenv("TWILIO_WA_FROM", "whatsapp:+14155238886")
+    TWILIO_WA_JOIN: str = os.getenv("TWILIO_WA_JOIN", "join ants-whistle")
+
+    # App
     APP_NAME: str = "CARSTRIMS"
     DEBUG: bool = False
     FRONTEND_URL: str = "https://carstrims-app.vercel.app"
@@ -35,7 +43,7 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
     CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
 
-        # ── Web Push (VAPID) ──
+    # Web Push (VAPID)
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
 
@@ -45,5 +53,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-
