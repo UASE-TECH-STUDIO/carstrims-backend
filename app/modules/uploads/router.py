@@ -275,3 +275,28 @@ async def upload_dealer_signature(
     )
 
     return {"message": "Signature uploaded", "signature": result["url"]}
+
+
+# ── DEALER PROFILE PICTURE (separate from user profile picture) ───────────────
+@router.post("/dealer/profile-picture")
+async def upload_dealer_profile_picture(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_dealer),
+):
+    """Upload the dealer admin's personal profile picture."""
+    db = get_db()
+    uid = str(current_user["_id"])
+
+    result = await upload_image(
+        file,
+        folder=f"users/{uid}/profile",
+        public_id=f"profile-{uid}",
+    )
+
+    # Update user record
+    await db["users"].update_one(
+        {"_id": current_user["_id"]},
+        {"$set": {"profilePicture": result["url"], "avatar": result["url"], "updatedAt": datetime.utcnow()}},
+    )
+
+    return {"message": "Profile picture uploaded", "profilePicture": result["url"], "url": result["url"]}

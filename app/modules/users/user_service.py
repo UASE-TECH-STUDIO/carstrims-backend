@@ -94,6 +94,25 @@ async def toggle_like(user_id: str, car_id: str) -> dict:
             "userId": user_id, "carId": car_id, "createdAt": datetime.utcnow(),
         })
         await db["car_listings"].update_one({"carId": car_id}, {"$inc": {"likeCount": 1}})
+        # Notify the dealer that owns this car
+        car_doc = await db["car_listings"].find_one({"carId": car_id})
+        if car_doc:
+            dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(car_doc["dealerId"])}) if __import__("bson").ObjectId.is_valid(car_doc.get("dealerId","")) else None
+            if dealer and dealer.get("userId"):
+                liker = await db["users"].find_one({"_id": __import__("bson").ObjectId(user_id)}) if __import__("bson").ObjectId.is_valid(user_id) else None
+                actor_name = liker.get("fullName","Someone") if liker else "Someone"
+                await db["notifications"].insert_one({
+                    "receiverId": dealer["userId"],
+                    "senderId": user_id,
+                    "actorId": user_id,
+                    "actorName": actor_name,
+                    "type": "car_liked",
+                    "title": "Car Liked",
+                    "message": f"{actor_name} liked your {car_doc.get('brand','')} {car_doc.get('model','')}.",
+                    "isRead": False,
+                    "data": {"carId": car_id, "carName": f"{car_doc.get('brand','')} {car_doc.get('model','')}"},
+                    "createdAt": __import__("datetime").datetime.utcnow(),
+                })
         return {"liked": True}
 
 
@@ -304,3 +323,4 @@ async def get_all_users_admin(search: str = None, role: str = None, skip: int = 
         s.pop("passwordHash", None)
         clean.append(s)
     return {"total": total, "users": clean, "skip": skip, "limit": limit}
+
