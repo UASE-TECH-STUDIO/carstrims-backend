@@ -10,6 +10,7 @@ from app.database.connection import get_db
 from bson import ObjectId
 from pydantic import BaseModel
 from app.config.settings import settings
+from datetime import datetime
 
 
 class CommentBody(BaseModel):
@@ -29,14 +30,95 @@ router = APIRouter(prefix="/api/v1/public", tags=["Public Feed"])
 async def public_car_feed(
     search: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
+    condition: Optional[str] = Query(None),
+    transmission: Optional[str] = Query(None),
+    fuel_type: Optional[str] = Query(None),
+    status: Optional[str] = Query("available"),
     min_price: Optional[float] = Query(None),
     max_price: Optional[float] = Query(None),
     city: Optional[str] = Query(None),
+    year_from: Optional[int] = Query(None),
+    year_to: Optional[int] = Query(None),
+    color: Optional[str] = Query(None),
     sort: Optional[str] = Query("newest"),
     skip: int = Query(0),
     limit: int = Query(20),
 ):
-    return await get_public_cars(search, brand, min_price, max_price, city, skip, limit)
+    db = get_db()
+    query: dict = {}
+
+    if status and status != "all":
+        query["status"] = status
+
+    if search:
+        query["$or"] = [
+            {"brand": {"$regex": search, "$options": "i"}},
+            {"model": {"$regex": search, "$options": "i"}},
+            {"year": {"$regex": str(search), "$options": "i"}} if str(search).isdigit() else {},
+            {"color": {"$regex": search, "$options": "i"}},
+            {"carId": {"$regex": search, "$options": "i"}},
+        ]
+        # Remove empty dict from $or
+        query["$or"] = [q for q in query["$or"] if q]
+
+    if brand:
+        query["brand"] = {"$regex": brand, "$options": "i"}
+    if condition:
+        query["condition"] = {"$regex": condition, "$options": "i"}
+    if transmission:
+        query["transmission"] = {"$regex": transmission, "$options": "i"}
+    if fuel_type:
+        query["fuelType"] = {"$regex": fuel_type, "$options": "i"}
+    if color:
+        query["color"] = {"$regex": color, "$options": "i"}
+    if city:
+        query["$or"] = query.get("$or", []) + [
+            {"city": {"$regex": city, "$options": "i"}},
+            {"state": {"$regex": city, "$options": "i"}},
+        ]
+    if min_price is not None:
+        query.setdefault("sellingPrice", {})["$gte"] = min_price
+    if max_price is not None:
+        query.setdefault("sellingPrice", {})["$lte"] = max_price
+    if year_from is not None:
+        query.setdefault("year", {})["$gte"] = year_from
+    if year_to is not None:
+        query.setdefault("year", {})["$lte"] = year_to
+
+    sort_field = "createdAt"
+    sort_dir = -1
+    if sort == "price_asc":
+        sort_field, sort_dir = "sellingPrice", 1
+    elif sort == "price_desc":
+        sort_field, sort_dir = "sellingPrice", -1
+    elif sort == "popular":
+        sort_field, sort_dir = "viewCount", -1
+
+    # Only show cars from approved dealers
+    approved_dealers = await db["dealer_organizations"].find(
+        {"status": "approved"}, {"_id": 1}
+    ).to_list(10000)
+    approved_ids = [str(d["_id"]) for d in approved_dealers]
+    query["dealerId"] = {"$in": approved_ids}
+
+    total = await db["car_listings"].count_documents(query)
+    cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
+
+    result = []
+    for car in cars:
+        s = serialize_doc(car)
+        dealer = await db["dealer_organizations"].find_one(
+            {"_id": ObjectId(car["dealerId"])}
+        ) if ObjectId.is_valid(car.get("dealerId", "")) else None
+        if dealer:
+            s["dealerName"] = dealer.get("companyName")
+            s["dealerLogo"] = dealer.get("logo")
+            s["dealerWhatsapp"] = dealer.get("whatsapp")
+            s["dealerId"] = dealer.get("dealerId")
+            s["state"] = car.get("state") or dealer.get("state")
+        result.append(s)
+
+    return {"total": total, "cars": result, "skip": skip, "limit": limit}
 
 
 @router.get("/cars/{car_id}")
@@ -51,7 +133,6 @@ async def public_car_detail(car_id: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Car not found")
 
-    # increment view count
     await db["car_listings"].update_one({"_id": car["_id"]}, {"$inc": {"viewCount": 1}})
 
     serialized = serialize_doc(car)
@@ -72,6 +153,7 @@ async def public_car_detail(car_id: str):
             "city": dealer.get("city"),
             "state": dealer.get("state"),
             "qrCode": dealer.get("qrCode"),
+            "userId": dealer.get("userId"),
         }
 
     return serialized
@@ -99,10 +181,7 @@ async def public_dealers(
         "totalCarsSold", -1
     ).skip(skip).limit(limit).to_list(limit)
 
-    return {
-        "total": total,
-        "dealers": [serialize_doc(d) for d in dealers],
-    }
+    return {"total": total, "dealers": [serialize_doc(d) for d in dealers]}
 
 
 @router.get("/dealers/{dealer_id}")
@@ -123,7 +202,82 @@ async def public_dealer_profile(dealer_id: str):
 
     result = serialize_doc(dealer)
     result["availableCars"] = [serialize_doc(c) for c in cars]
+    result["userId"] = dealer.get("userId")
+    follower_count = await db["follows"].count_documents({"dealerId": str(dealer["_id"])})
+    result["followerCount"] = follower_count
     return result
+
+
+# ── PUBLIC USER PROFILE ───────────────────────────────────────
+# This is what the frontend /users/[userId] page calls
+
+@router.get("/users/{user_id}")
+async def public_user_profile(user_id: str):
+    db = get_db()
+
+    # Try by ObjectId (_id) first, then by userId string
+    user = None
+    if ObjectId.is_valid(user_id):
+        user = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user:
+        user = await db["users"].find_one({"userId": user_id})
+
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Return only safe public fields — never return passwordHash
+    role = user.get("role", "USER")
+    profile = {
+        "_id": str(user["_id"]),
+        "userId": str(user["_id"]),
+        "fullName": user.get("fullName"),
+        "role": role,
+        "avatar": user.get("avatar") or user.get("profilePicture"),
+        "city": user.get("city"),
+        "state": user.get("state"),
+        "bio": user.get("bio"),
+        "phone": user.get("phone") if user.get("showPhone", True) else None,
+        "whatsapp": user.get("whatsapp") if user.get("showWhatsapp", True) else None,
+        "email": user.get("email") if user.get("showEmail", False) else None,
+        "instagram": user.get("instagram"),
+        "facebook": user.get("facebook"),
+        "twitter": user.get("twitter"),
+        "tiktok": user.get("tiktok"),
+        "website": user.get("website"),
+        "createdAt": user.get("createdAt"),
+    }
+
+    # Attach dealer info for DEALER_ADMIN and DEALER_STAFF
+    if role in ("DEALER_ADMIN", "DEALER_STAFF"):
+        dealer = None
+        if role == "DEALER_ADMIN":
+            dealer = await db["dealer_organizations"].find_one({"userId": str(user["_id"])})
+        elif role == "DEALER_STAFF":
+            staff = await db["staff_accounts"].find_one({"userId": str(user["_id"])})
+            if staff and staff.get("dealerId"):
+                dealer = await db["dealer_organizations"].find_one(
+                    {"_id": ObjectId(staff["dealerId"])} if ObjectId.is_valid(staff["dealerId"])
+                    else {"dealerId": staff["dealerId"]}
+                )
+        if dealer:
+            profile["dealer"] = {
+                "dealerId": dealer.get("dealerId"),
+                "companyName": dealer.get("companyName"),
+                "logo": dealer.get("logo"),
+                "city": dealer.get("city"),
+                "state": dealer.get("state"),
+            }
+
+    # Attach partner stats for PARTNER_USER
+    if role == "PARTNER_USER":
+        total_cars = await db["car_listings"].count_documents({"ownerId": str(user["_id"]), "ownerType": "partner"})
+        total_dealers = await db["partner_links"].count_documents(
+            {"partnerId": str(user["_id"]), "status": "approved"}
+        ) if "partner_links" in await db.list_collection_names() else 0
+        profile["stats"] = {"totalCars": total_cars, "totalDealers": total_dealers}
+
+    return profile
 
 
 # ── QR CODE ───────────────────────────────────────────────────
@@ -165,7 +319,6 @@ async def unfavorite_car(car_id: str, current_user: dict = Depends(get_current_u
 
 @router.get("/cars/{car_id}/likes/me")
 async def my_like_status(car_id: str, current_user: dict = Depends(get_current_user)):
-    from app.database.connection import get_db
     db = get_db()
     liked = await db["car_likes"].find_one({"userId": str(current_user["_id"]), "carId": car_id})
     faved = await db["favorites"].find_one({"userId": str(current_user["_id"]), "carId": car_id})
