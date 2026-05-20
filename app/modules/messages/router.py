@@ -24,7 +24,13 @@ class MessageSend(BaseModel):
 
 class ConversationStart(BaseModel):
     receiverId: str
-    message: str
+    message: Optional[str] = None      # optional — user drafts it themselves
+    carId: Optional[str] = None        # car being enquired about
+    carBrand: Optional[str] = None
+    carModel: Optional[str] = None
+    carYear: Optional[int] = None
+    carImage: Optional[str] = None
+    carPrice: Optional[float] = None
 
 
 def gen_msg_id():
@@ -99,44 +105,72 @@ async def start_conversation(
 
     now = datetime.utcnow()
 
+    # Build car context if provided
+    car_context = None
+    if data.carId:
+        car_context = {
+            "carId": data.carId,
+            "carBrand": data.carBrand,
+            "carModel": data.carModel,
+            "carYear": data.carYear,
+            "carImage": data.carImage,
+            "carPrice": data.carPrice,
+        }
+        # Fetch full car details if only carId given
+        if not data.carBrand:
+            car_doc = await db["car_listings"].find_one({"carId": data.carId})
+            if car_doc:
+                car_context["carBrand"] = car_doc.get("brand")
+                car_context["carModel"] = car_doc.get("model")
+                car_context["carYear"] = car_doc.get("year")
+                car_context["carPrice"] = car_doc.get("sellingPrice")
+                imgs = car_doc.get("images", [])
+                car_context["carImage"] = imgs[0] if imgs else None
+
     if not existing:
         conv_doc = {
             "conversationId": gen_conv_id(),
             "participants": [uid, receiver_mongo_id],
-            "lastMessage": data.message,
+            "lastMessage": data.message or "",
             "lastMessageAt": now,
+            "carContext": car_context,
             "createdAt": now,
         }
         await db["conversations"].insert_one(conv_doc)
         conv_id = conv_doc["conversationId"]
     else:
         conv_id = existing["conversationId"]
+        update_fields = {"lastMessageAt": now}
+        if car_context:
+            update_fields["carContext"] = car_context
         await db["conversations"].update_one(
             {"conversationId": conv_id},
-            {"$set": {"lastMessage": data.message, "lastMessageAt": now}},
+            {"$set": update_fields},
         )
 
-    msg_doc = {
-        "messageId": gen_msg_id(),
-        "conversationId": conv_id,
-        "senderId": uid,
-        "receiverId": receiver_mongo_id,
-        "message": data.message,
-        "isRead": False,
-        "createdAt": now,
-    }
-    await db["messages"].insert_one(msg_doc)
+    # Only create message + notify if the user actually sent a message
+    if data.message and data.message.strip():
+        msg_doc = {
+            "messageId": gen_msg_id(),
+            "conversationId": conv_id,
+            "senderId": uid,
+            "receiverId": receiver_mongo_id,
+            "message": data.message,
+            "isRead": False,
+            "createdAt": now,
+        }
+        await db["messages"].insert_one(msg_doc)
 
-    await db["notifications"].insert_one({
-        "receiverId": receiver_mongo_id,
-        "senderId": uid,
-        "type": "message",
-        "title": f"New message from {current_user.get('fullName', 'Someone')}",
-        "message": data.message[:80],
-        "isRead": False,
-        "data": {"conversationId": conv_id},
-        "createdAt": now,
-    })
+        await db["notifications"].insert_one({
+            "receiverId": receiver_mongo_id,
+            "senderId": uid,
+            "type": "message",
+            "title": f"New message from {current_user.get('fullName', 'Someone')}",
+            "message": data.message[:80],
+            "isRead": False,
+            "data": {"conversationId": conv_id},
+            "createdAt": now,
+        })
 
     return {"conversationId": conv_id, "message": "Conversation started"}
 
@@ -361,3 +395,4 @@ async def send_message_with_attachment(
             "createdAt": now,
         })
     return serialize_doc(msg_doc)
+
