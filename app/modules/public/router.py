@@ -94,12 +94,12 @@ async def public_car_feed(
     elif sort == "popular":
         sort_field, sort_dir = "viewCount", -1
 
-    # Only show cars from approved dealers
-    approved_dealers = await db["dealer_organizations"].find(
-        {"status": "approved"}, {"_id": 1}
+    # Show cars from all dealers with any active status
+    visible_dealers = await db["dealer_organizations"].find(
+        {"status": {"$in": ["approved", "active", "awaiting_approval", "pending"]}}, {"_id": 1}
     ).to_list(10000)
-    approved_ids = [str(d["_id"]) for d in approved_dealers]
-    query["dealerId"] = {"$in": approved_ids}
+    visible_ids = [str(d["_id"]) for d in visible_dealers]
+    query["dealerId"] = {"$in": visible_ids}
 
     total = await db["car_listings"].count_documents(query)
     cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
@@ -205,6 +205,19 @@ async def public_dealer_profile(dealer_id: str):
     result["userId"] = dealer.get("userId")
     follower_count = await db["follows"].count_documents({"dealerId": str(dealer["_id"])})
     result["followerCount"] = follower_count
+
+    # Add social links from dealer owner's user profile if not already on dealer doc
+    if dealer.get("userId"):
+        owner = None
+        if ObjectId.is_valid(str(dealer["userId"])):
+            owner = await db["users"].find_one({"_id": ObjectId(str(dealer["userId"]))})
+        if not owner:
+            owner = await db["users"].find_one({"userId": str(dealer["userId"])})
+        if owner:
+            for field in ["instagram", "facebook", "twitter", "tiktok", "youtube", "website", "phone", "whatsapp", "email"]:
+                if not result.get(field) and owner.get(field):
+                    result[field] = owner.get(field)
+
     return result
 
 
