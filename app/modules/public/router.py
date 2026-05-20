@@ -202,6 +202,9 @@ async def public_dealer_profile(dealer_id: str):
 
     result = serialize_doc(dealer)
     result["availableCars"] = [serialize_doc(c) for c in cars]
+    result["userId"] = dealer.get("userId")
+    follower_count = await db["follows"].count_documents({"dealerId": str(dealer["_id"])})
+    result["followerCount"] = follower_count
     return result
 
 
@@ -359,3 +362,4 @@ async def reply_comment(
     current_user: dict = Depends(get_current_user),
 ):
     return await add_reply(str(current_user["_id"]), comment_id, body.text)
+
