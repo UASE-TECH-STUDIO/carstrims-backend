@@ -29,6 +29,11 @@ class RequestCreate(BaseModel):
     paymentType: str = "full"
     description: Optional[str] = None
     dealerId: Optional[str] = None
+    condition: Optional[str] = None
+    transmission: Optional[str] = None
+    fuelType: Optional[str] = None
+    referencePhoto: Optional[str] = None
+    referencePhotos: Optional[list] = None
 
 
 class ProfileUpdate(BaseModel):
@@ -180,7 +185,14 @@ async def create_request(data: RequestCreate, current_user: dict = Depends(get_c
         "carBrand": data.carBrand, "carModel": data.carModel, "carYear": data.carYear,
         "carColor": data.carColor, "budget": data.budget, "paymentType": data.paymentType,
         "description": data.description, "dealerId": dealer_id, "dealerName": dealer_name,
+        "condition": data.condition, "transmission": data.transmission,
+        "fuelType": data.fuelType,
+        "referencePhoto": data.referencePhoto,
+        "referencePhotos": data.referencePhotos or (
+            [data.referencePhoto] if data.referencePhoto else []
+        ),
         "status": "pending", "dealerResponse": None,
+        "journey": None,
         "createdAt": datetime.utcnow(), "updatedAt": datetime.utcnow(),
     }
     await db["car_requests"].insert_one(doc)
