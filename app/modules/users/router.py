@@ -319,6 +319,71 @@ async def buyer_cancel_request(
     return {"message": "Request cancelled"}
 
 
+@router.get("/requests/dealer")
+async def get_dealer_requests(
+    status: str = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Dealer: returns all requests from car_requests collection.
+    - General requests (no dealerId): visible to ALL dealers while status=pending
+    - Specific requests (dealerId = this dealer): always visible to this dealer
+    - Once a dealer accepts, dealerId is set to that dealer -> disappears from others
+    """
+    db = get_db()
+    from app.modules.dealers.service import get_dealer_by_user_id
+
+    try:
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Not a dealer account")
+
+    dealer_id = str(dealer["_id"])
+
+    # Build query:
+    # Show requests that are either:
+    # (a) specifically directed at this dealer, OR
+    # (b) general (no dealerId / null dealerId) and still pending
+    query = {
+        "$or": [
+            {"dealerId": dealer_id},                             # targeted at this dealer
+            {"dealerId": None, "status": "pending"},             # general, still open
+            {"dealerId": {"$exists": False}, "status": "pending"}, # general (no field)
+        ]
+    }
+
+    # Optional status filter
+    if status and status != "all":
+        # For status filter, override the OR - just filter by dealerId + status
+        query = {
+            "$or": [
+                {"dealerId": dealer_id, "status": status},
+                {"dealerId": None, "status": status},
+                {"dealerId": {"$exists": False}, "status": status},
+            ]
+        }
+
+    reqs = await db["car_requests"].find(query).sort("createdAt", -1).to_list(200)
+
+    result = []
+    for r in reqs:
+        s = serialize_doc(r)
+        # Enrich with buyer info
+        if r.get("userId") and ObjectId.is_valid(str(r["userId"])):
+            buyer = await db["users"].find_one({"_id": ObjectId(r["userId"])})
+            if buyer:
+                s["buyerName"] = buyer.get("fullName") or r.get("userName")
+                s["buyerPhone"] = buyer.get("phone") or r.get("userPhone")
+                s["buyerWhatsapp"] = buyer.get("whatsapp")
+                s["buyerEmail"] = buyer.get("email")
+                s["buyerAvatar"] = buyer.get("avatar") or buyer.get("profilePicture")
+                s["buyerUserId"] = str(buyer["_id"])
+        result.append(s)
+
+    return result
+
+
 @router.get("/requests/{request_id}")
 async def get_request_detail(
     request_id: str,
