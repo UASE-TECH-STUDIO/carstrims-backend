@@ -133,6 +133,53 @@ async def list_dealers(
     return {"total": total, "dealers": enriched}
 
 
+@router.get("/dealers/{dealer_id}/setup")
+async def get_dealer_setup(dealer_id: str, admin=Depends(require_admin)):
+    """Fetch a single dealer with full enriched data for admin detail page."""
+    db = get_db()
+
+    dealer = None
+    if ObjectId.is_valid(dealer_id):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
+    if not dealer:
+        dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+    if not dealer:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Dealer not found")
+
+    result = serialize_doc(dealer)
+    result["staffCount"] = await db["staff_accounts"].count_documents({"dealerId": str(dealer["_id"])})
+    result["carCount"]   = await db["car_listings"].count_documents({"dealerId": str(dealer["_id"])})
+    result["soldCount"]  = await db["car_listings"].count_documents({"dealerId": str(dealer["_id"]), "status": "sold"})
+
+    # Enrich with owner user data
+    owner = None
+    if dealer.get("userId"):
+        uid = str(dealer["userId"])
+        if ObjectId.is_valid(uid):
+            owner = await db["users"].find_one({"_id": ObjectId(uid)})
+        if not owner:
+            owner = await db["users"].find_one({"userId": uid})
+    if owner:
+        result["ownerUser"] = {
+            "fullName": owner.get("fullName"),
+            "email": owner.get("email"),
+            "phone": owner.get("phone"),
+            "status": owner.get("status"),
+            "_id": str(owner["_id"]),
+        }
+        # Merge document fields from user if not on dealer doc
+        for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness"]:
+            if not result.get(field) and owner.get(field):
+                result[field] = owner[field]
+
+    # Recent vehicles
+    cars = await db["car_listings"].find({"dealerId": str(dealer["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
+    result["recentCars"] = [serialize_doc(c) for c in cars]
+
+    return result
+
+
 @router.post("/dealers/{dealer_id}/approve")
 async def approve_dealer(dealer_id: str, admin=Depends(require_admin)):
     db = get_db()
