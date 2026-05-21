@@ -328,6 +328,48 @@ async def update_user_profile_admin(user_id: str, data: dict = Body({}), admin=D
     return {"message": "Profile updated"}
 
 
+
+@router.post("/users/{user_id}/upload-doc")
+async def admin_upload_user_doc(
+    user_id: str,
+    field: str = Query(...),
+    folder: str = Query("documents"),
+    file: UploadFile = File(...),
+    admin=Depends(require_admin),
+):
+    """Admin can upload/replace any document for a user."""
+    import cloudinary.uploader
+    import os
+    db = get_db()
+
+    contents = await file.read()
+    result = cloudinary.uploader.upload(
+        contents,
+        folder=f"carstrims/{folder}",
+        resource_type="auto",
+    )
+    url = result.get("secure_url")
+    if not url:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="Upload failed")
+
+    # Save to user doc
+    q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
+    await db["users"].update_one(q, {"$set": {field: url, "updatedAt": datetime.utcnow()}})
+
+    # If it's a dealer document, also save to dealer_organizations
+    if field in ("passportPhoto", "logo", "idCardUrl", "cacUrl"):
+        user = await db["users"].find_one(q)
+        if user:
+            dealer = await db["dealer_organizations"].find_one({"userId": str(user["_id"])})
+            if dealer:
+                await db["dealer_organizations"].update_one(
+                    {"_id": dealer["_id"]},
+                    {"$set": {field: url, "updatedAt": datetime.utcnow()}}
+                )
+
+    return {"url": url, "field": field}
+
 @router.post("/users/{user_id}/restrict-profile-field")
 async def restrict_profile_field(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
     """Flag a specific profile field as restricted."""
