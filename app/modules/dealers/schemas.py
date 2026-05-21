@@ -12,6 +12,9 @@ class DealerSetupRequest(BaseModel):
     state: Optional[str] = None
     country: Optional[str] = "Nigeria"
     description: Optional[str] = None
+    logo: Optional[str] = None
+    passportPhoto: Optional[str] = None
+    banner: Optional[str] = None
 
 
 class DealerUpdateRequest(BaseModel):

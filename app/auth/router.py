@@ -92,7 +92,7 @@ async def register(data: RegisterRequest):
     await db["notifications"].insert_one({
         "receiverId": user_doc["userId"],
         "type": "general",
-        "title": "Welcome to CARSTRIMS! 🎉",
+        "title": "Welcome to CARSTRIMS! ",
         "message": f"Hello {data.fullName}! Your account has been created. {'Complete your dealership setup to get started.' if data.role == 'DEALER_ADMIN' else 'Browse vehicles and message dealers directly.'}",
         "isRead": False,
         "createdAt": datetime.utcnow(),
@@ -147,6 +147,7 @@ async def login(data: LoginRequest):
         "accessToken": access_token,
         "refreshToken": refresh_token,
         "userId": user.get("userId", uid),
+        "mongoId": uid,   # str(_id) - needed for message senderId comparison
         "fullName": user["fullName"],
         "email": user["email"],
         "role": user["role"],
@@ -213,7 +214,7 @@ async def forgot_password(data: ForgotPasswordRequest):
         "receiverId": str(user["_id"]),
         "type": "general",
         "title": "Password Reset",
-        "message": f"Your temporary password is: {temp_password} — Please change it after logging in.",
+        "message": f"Your temporary password is: {temp_password}  Please change it after logging in.",
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
@@ -274,27 +275,27 @@ async def forgot_password_send(data: ForgotPasswordSend):
         from app.services.notifications import send_email, send_whatsapp, email_base
         if data.method == "email":
             html = email_base(
-                "Your New Password — CARSTRIMS",
+                "Your New Password  CARSTRIMS",
                 f"""
                 <p>Hello {user.get('fullName','')},</p>
                 <div style="background:#F5F5F5;border-radius:8px;padding:1.25rem;text-align:center;margin:1rem 0">
                   <p style="margin:0;font-size:0.8rem;color:#888">TEMPORARY PASSWORD</p>
                   <p style="margin:0.5rem 0 0;font-size:1.5rem;font-family:monospace;font-weight:bold">{temp_password}</p>
                 </div>
-                <p style="color:#DC2626;font-size:0.875rem">⚠️ Change this immediately after login.</p>
-                <a href="https://carstrims-app.vercel.app/login" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">Login Now →</a>
+                <p style="color:#DC2626;font-size:0.875rem"> Change this immediately after login.</p>
+                <a href="https://carstrims-app.vercel.app/login" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">Login Now </a>
                 """,
             )
             import asyncio
-            asyncio.create_task(send_email(user["email"], "CARSTRIMS — New Temporary Password", html))
+            asyncio.create_task(send_email(user["email"], "CARSTRIMS  New Temporary Password", html))
         elif data.method == "whatsapp":
             phone = user.get("whatsapp") or user.get("phone", "")
             import asyncio
             asyncio.create_task(send_whatsapp(phone,
-                f"🔑 *CARSTRIMS Password Reset*\n\n"
+                f" *CARSTRIMS Password Reset*\n\n"
                 f"Your temporary password: *{temp_password}*\n\n"
-                f"⚠️ Please login and change it.\n\n"
-                f"👉 https://carstrims-app.vercel.app/login"
+                f" Please login and change it.\n\n"
+                f" https://carstrims-app.vercel.app/login"
             ))
     except Exception:
         pass
@@ -303,7 +304,7 @@ async def forgot_password_send(data: ForgotPasswordSend):
         "receiverId": str(user["_id"]),
         "type": "general",
         "title": "Password Reset",
-        "message": f"Temporary password: {temp_password} — Change it after login.",
+        "message": f"Temporary password: {temp_password}  Change it after login.",
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })

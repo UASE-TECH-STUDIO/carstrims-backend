@@ -36,7 +36,7 @@ class BroadcastRequest(BaseModel):
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 
 
-# ── STATS (corrected role counts) ────────────────────────────
+#  STATS (corrected role counts) 
 @router.get("/stats")
 async def get_stats(admin=Depends(require_admin)):
     db = get_db()
@@ -90,7 +90,7 @@ async def get_stats(admin=Depends(require_admin)):
     }
 
 
-# ── DEALERS ───────────────────────────────────────────────────
+#  DEALERS 
 @router.get("/dealers")
 async def list_dealers(
     status: Optional[str] = Query(None),
@@ -116,6 +116,19 @@ async def list_dealers(
         s["staffCount"] = await db["staff_accounts"].count_documents({"dealerId": str(d["_id"])})
         s["carCount"] = await db["car_listings"].count_documents({"dealerId": str(d["_id"])})
         s["soldCount"] = await db["car_listings"].count_documents({"dealerId": str(d["_id"]), "status": "sold"})
+        # Enrich with user doc fields that may be stored there
+        if d.get("userId"):
+            user_doc = await db["users"].find_one({"_id": ObjectId(d["userId"])}) if ObjectId.is_valid(str(d["userId"])) else None
+            if not user_doc:
+                user_doc = await db["users"].find_one({"userId": str(d["userId"])})
+            if user_doc:
+                # Pull document fields from user doc if not already on dealer doc
+                for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness", "profilePicture", "avatar"]:
+                    if not s.get(field) and user_doc.get(field):
+                        s[field] = user_doc[field]
+                s["ownerEmail"] = user_doc.get("email")
+                s["ownerPhone"] = user_doc.get("phone")
+                s["ownerStatus"] = user_doc.get("status")
         enriched.append(s)
     return {"total": total, "dealers": enriched}
 
@@ -132,7 +145,7 @@ async def approve_dealer(dealer_id: str, admin=Depends(require_admin)):
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "active"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Dealership Approved ✅",
+        "title": "Dealership Approved ",
         "message": "Your dealership has been approved. You now have full access to your dashboard.",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
@@ -180,7 +193,7 @@ async def suspend_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(re
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "suspended"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Suspended ⛔", "message": note,
+        "title": "Account Suspended ", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Dealer suspended"}
@@ -198,7 +211,7 @@ async def warn_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(requi
     await db["dealer_organizations"].update_one(q, {"$set": {"warningNote": note, "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Warning ⚠️", "message": note,
+        "title": "Account Warning ", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Warning sent"}
@@ -227,7 +240,7 @@ async def reset_dealer_password(user_id: str, data: dict = Body({}), admin=Depen
     return {"message": "Password reset", "newPassword": new_password}
 
 
-# ── USERS ──────────────────────────────────────────────────────
+#  USERS 
 @router.get("/users")
 async def list_users(
     role: Optional[str] = Query(None),
@@ -254,6 +267,78 @@ async def list_users(
     return {"total": total, "users": clean}
 
 
+
+@router.get("/users/{user_id}/profile")
+async def get_user_full_profile(user_id: str, admin=Depends(require_admin)):
+    """Full user profile for super-admin - includes dealer docs, cars, appointments."""
+    db = get_db()
+    # Find user
+    user = None
+    if ObjectId.is_valid(user_id):
+        user = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user:
+        user = await db["users"].find_one({"userId": user_id})
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    s = serialize_doc(user)
+    s.pop("passwordHash", None)
+
+    # Attach dealer profile if DEALER_ADMIN
+    dealer = None
+    if user.get("role") in ("DEALER_ADMIN", "DEALER_STAFF"):
+        if user.get("role") == "DEALER_ADMIN":
+            dealer = await db["dealer_organizations"].find_one({"userId": str(user["_id"])})
+        else:
+            staff = await db["staff_accounts"].find_one({"userId": str(user["_id"])})
+            if staff:
+                dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(staff["dealerId"])}) if ObjectId.is_valid(str(staff.get("dealerId",""))) else None
+        if dealer:
+            ds = serialize_doc(dealer)
+            # Merge document fields from user into dealer if missing
+            for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness"]:
+                if not ds.get(field) and s.get(field):
+                    ds[field] = s[field]
+            s["dealer"] = ds
+            # Recent cars
+            cars = await db["car_listings"].find({"dealerId": str(dealer["_id"])}).sort("createdAt", -1).limit(20).to_list(20)
+            s["recentCars"] = [serialize_doc(c) for c in cars]
+
+    # Appointments
+    appts = await db["appointments"].find({"userId": str(user["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
+    s["appointments"] = [serialize_doc(a) for a in appts]
+
+    # Vehicle requests
+    requests = await db["special_requests"].find({"userId": str(user["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
+    s["vehicleRequests"] = [serialize_doc(r) for r in requests]
+
+    return s
+
+
+@router.patch("/users/{user_id}/profile")
+async def update_user_profile_admin(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
+    """Admin can update any user profile field."""
+    db = get_db()
+    data.pop("_id", None)
+    data.pop("passwordHash", None)
+    data["updatedAt"] = datetime.utcnow()
+    q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
+    await db["users"].update_one(q, {"$set": data})
+    return {"message": "Profile updated"}
+
+
+@router.post("/users/{user_id}/restrict-profile-field")
+async def restrict_profile_field(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
+    """Flag a specific profile field as restricted."""
+    db = get_db()
+    field = data.get("field")
+    reason = data.get("reason", "")
+    q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
+    await db["users"].update_one(q, {"$set": {f"restricted.{field}": reason, "updatedAt": datetime.utcnow()}})
+    return {"message": f"Field {field} restricted"}
+
+
 @router.post("/users/{user_id}/suspend")
 async def suspend_user(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
     db = get_db()
@@ -261,7 +346,7 @@ async def suspend_user(user_id: str, data: dict = Body({}), admin=Depends(requir
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "suspended", "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Suspended ⛔", "message": reason,
+        "title": "Account Suspended ", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "User suspended"}
@@ -273,7 +358,7 @@ async def unsuspend_user(user_id: str, admin=Depends(require_admin)):
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "active", "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Reactivated ✅",
+        "title": "Account Reactivated ",
         "message": "Your account has been reactivated. Welcome back!",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
@@ -286,7 +371,7 @@ async def warn_user(user_id: str, data: dict = Body({}), admin=Depends(require_a
     reason = data.get("reason", "Please review your account activity.")
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Warning ⚠️", "message": reason,
+        "title": "Account Warning ", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
     return {"message": "Warning sent"}
@@ -308,7 +393,7 @@ async def reset_user_password(user_id: str, data: dict = Body({}), admin=Depends
     return {"message": "Password reset", "newPassword": new_password}
 
 
-# ── CAR MODERATION ────────────────────────────────────────────
+#  CAR MODERATION 
 @router.delete("/cars/{car_id}")
 async def admin_delete_car(car_id: str, admin=Depends(require_admin)):
     db = get_db()
@@ -352,7 +437,7 @@ async def admin_delete_comment(car_id: str, comment_id: str, admin=Depends(requi
     return {"message": "Comment deleted"}
 
 
-# ── BROADCAST (with specific user targeting + video) ──────────
+#  BROADCAST (with specific user targeting + video) 
 @router.post("/broadcast")
 async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     db = get_db()
@@ -452,7 +537,7 @@ async def get_broadcasts(skip: int = Query(0), limit: int = Query(20), admin=Dep
     return {"total": total, "broadcasts": [serialize_doc(d) for d in docs]}
 
 
-# ── UPLOAD (image, video, document) ──────────────────────────
+#  UPLOAD (image, video, document) 
 @router.post("/upload/document")
 async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depends(require_admin)):
     try:
@@ -486,7 +571,7 @@ async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depend
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
 
 
-# ── ANALYTICS ─────────────────────────────────────────────────
+#  ANALYTICS 
 @router.get("/growth")
 async def analytics_growth(admin=Depends(require_admin)):
     db = get_db()
@@ -531,7 +616,7 @@ async def activity_log(skip: int = Query(0), limit: int = Query(50), admin=Depen
     return {"activities": [serialize_doc(d) for d in docs]}
 
 
-# ── CREATE DEALER ─────────────────────────────────────────────
+#  CREATE DEALER 
 @router.post("/create-dealer")
 async def create_dealer_account(data: dict = Body(...), admin=Depends(require_admin)):
     from app.auth.password import hash_password
@@ -563,4 +648,3 @@ async def create_dealer_account(data: dict = Body(...), admin=Depends(require_ad
     dealer_result = await db["dealer_organizations"].insert_one(dealer_doc)
     await db["users"].update_one({"_id": user_result.inserted_id}, {"$set": {"dealerId": str(dealer_result.inserted_id)}})
     return {"message": "Dealer created", "dealerId": dealer_doc["dealerId"], "email": email, "tempPassword": password}
-

@@ -69,6 +69,7 @@ async def create_dealer_profile(user_id: str, data: dict) -> dict:
         "country": data.get("country", "Nigeria"),
         "logo": data.get("logo"),
         "banner": data.get("banner"),
+        "passportPhoto": data.get("passportPhoto"),
         "description": data.get("description"),
         "status": DealerStatus.AWAITING_APPROVAL.value,
         "qrCode": None,

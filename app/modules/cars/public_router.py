@@ -24,7 +24,7 @@ class ReplyBody(BaseModel):
 router = APIRouter(prefix="/api/v1/public", tags=["Public Feed"])
 
 
-# ── PUBLIC CAR FEED ───────────────────────────────────────────
+#  PUBLIC CAR FEED 
 
 @router.get("/cars")
 async def public_car_feed(
@@ -94,12 +94,12 @@ async def public_car_feed(
     elif sort == "popular":
         sort_field, sort_dir = "viewCount", -1
 
-    # Show cars from all dealers with any active status
-    visible_dealers = await db["dealer_organizations"].find(
-        {"status": {"$in": ["approved", "active", "awaiting_approval", "pending"]}}, {"_id": 1}
+    # Only show cars from approved dealers in the public feed
+    approved_dealers = await db["dealer_organizations"].find(
+        {"status": "approved"}, {"_id": 1}
     ).to_list(10000)
-    visible_ids = [str(d["_id"]) for d in visible_dealers]
-    query["dealerId"] = {"$in": visible_ids}
+    approved_ids = [str(d["_id"]) for d in approved_dealers]
+    query["dealerId"] = {"$in": approved_ids}
 
     total = await db["car_listings"].count_documents(query)
     cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
@@ -221,7 +221,7 @@ async def public_dealer_profile(dealer_id: str):
     return result
 
 
-# ── PUBLIC USER PROFILE ───────────────────────────────────────
+#  PUBLIC USER PROFILE 
 # This is what the frontend /users/[userId] page calls
 
 @router.get("/users/{user_id}")
@@ -239,7 +239,7 @@ async def public_user_profile(user_id: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Return only safe public fields — never return passwordHash
+    # Return only safe public fields  never return passwordHash
     role = user.get("role", "USER")
     profile = {
         "_id": str(user["_id"]),
@@ -293,7 +293,7 @@ async def public_user_profile(user_id: str):
     return profile
 
 
-# ── QR CODE ───────────────────────────────────────────────────
+#  QR CODE 
 
 @router.post("/qr/generate")
 async def generate_qr(current_user: dict = Depends(get_current_dealer)):
@@ -313,7 +313,7 @@ async def get_dealer_qr_public(dealer_id: str):
     return await get_dealer_qr(dealer_id)
 
 
-# ── LIKES ────────────────────────────────────────────────────
+#  LIKES 
 
 @router.post("/cars/{car_id}/like")
 async def like_car(car_id: str, current_user: dict = Depends(get_current_user)):
@@ -338,7 +338,7 @@ async def my_like_status(car_id: str, current_user: dict = Depends(get_current_u
     return {"liked": bool(liked), "favorited": bool(faved)}
 
 
-# ── COMMENTS ────────────────────────────────────────────────
+#  COMMENTS 
 
 @router.post("/cars/{car_id}/comments")
 async def post_comment(
