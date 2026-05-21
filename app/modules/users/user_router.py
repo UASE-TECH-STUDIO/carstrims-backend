@@ -88,7 +88,7 @@ async def update_profile(data: ProfileUpdate, current_user: dict = Depends(get_c
     return s
 
 
-# â”€â”€ FAVORITES â€” unified "favorites" collection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  FAVORITES  unified "favorites" collection 
 @router.get("/favorites")
 async def get_favorites(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -146,7 +146,7 @@ async def get_likes(current_user: dict = Depends(get_current_user)):
     return [l["carId"] for l in likes]
 
 
-# â”€â”€ REQUESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  REQUESTS 
 @router.get("/requests")
 async def get_requests(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -187,7 +187,7 @@ async def create_request(data: RequestCreate, current_user: dict = Depends(get_c
     return serialize_doc(doc)
 
 
-# â”€â”€ APPOINTMENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  APPOINTMENTS 
 @router.get("/appointments")
 async def get_appointments(current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -239,41 +239,343 @@ async def create_appointment(data: AppointmentCreate, current_user: dict = Depen
     return serialize_doc(doc)
 
 
-@router.get("/requests/dealer")
-async def get_dealer_requests_for_user(current_user: dict = Depends(get_current_user)):
-    """
-    For dealer admins: returns ALL pending requests (both dealer-specific and general).
-    For regular users: returns their own requests.
-    """
+#  SPECIAL ORDER REQUEST FLOW 
+
+@router.post("/requests/{request_id}/accept")
+async def buyer_accept_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Buyer accepts dealer's counter-offer and starts the journey."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    req = await db["car_requests"].find_one(
+        {"$or": [{"requestId": request_id}, {"_id": ObjectId(request_id) if ObjectId.is_valid(request_id) else None}], "userId": uid}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {"status": "accepted", "journeyStarted": True, "journeyStartedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()}}
+    )
+    # Notify dealer
+    if req.get("dealerId") and ObjectId.is_valid(str(req["dealerId"])):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(req["dealerId"])})
+        if dealer and dealer.get("userId"):
+            await db["notifications"].insert_one({
+                "receiverId": str(dealer["userId"]), "senderId": uid,
+                "type": "request", "title": "Order Accepted!",
+                "message": f"{current_user.get('fullName','Buyer')} accepted your offer. The journey begins!",
+                "isRead": False, "createdAt": datetime.utcnow(),
+                "data": {"requestId": request_id},
+            })
+    return {"message": "Accepted. Journey started!"}
+
+
+@router.post("/requests/{request_id}/decline")
+async def buyer_decline_request(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """Buyer declines dealer's counter-offer."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    req = await db["car_requests"].find_one(
+        {"$or": [{"requestId": request_id}, {"_id": ObjectId(request_id) if ObjectId.is_valid(request_id) else None}], "userId": uid}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {"status": "declined", "buyerDeclineReason": data.get("reason", ""), "updatedAt": datetime.utcnow()}}
+    )
+    return {"message": "Offer declined"}
+
+
+@router.post("/requests/{request_id}/cancel")
+async def buyer_cancel_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Buyer cancels their own pending request."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    req = await db["car_requests"].find_one(
+        {"$or": [{"requestId": request_id}, {"_id": ObjectId(request_id) if ObjectId.is_valid(request_id) else None}], "userId": uid}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {"status": "cancelled", "updatedAt": datetime.utcnow()}}
+    )
+    return {"message": "Request cancelled"}
+
+
+@router.get("/requests/{request_id}")
+async def get_request_detail(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get full detail of a single request (buyer or dealer can access)."""
     db = get_db()
     uid = str(current_user["_id"])
     role = current_user.get("role", "")
 
-    if role == "DEALER_ADMIN":
-        from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
-        try:
-            dealer = await get_dealer_by_user_id(uid)
-            dealer_id = dealer["_id"]
-            reqs = await db["special_requests"].find({
-                "$or": [
-                    {"dealerId": dealer_id, "status": "pending"},
-                    {"dealerId": None, "status": "pending"},
-                    {"dealerId": {"$exists": False}, "status": "pending"},
-                ]
-            }).sort("createdAt", -1).to_list(100)
-        except Exception:
-            reqs = []
-    else:
-        reqs = await db["car_requests"].find({"userId": uid}).sort("createdAt", -1).to_list(50)
+    q = {"$or": [{"requestId": request_id}]}
+    if ObjectId.is_valid(request_id):
+        q["$or"].append({"_id": ObjectId(request_id)})
 
-    result = []
-    for r in reqs:
-        from app.modules.dealers.service import serialize_doc
-        s = serialize_doc(r)
-        if r.get("userId") and ObjectId.is_valid(r["userId"]):
-            requester = await db["users"].find_one({"_id": ObjectId(r["userId"])})
-            if requester:
-                s["userName"] = requester.get("fullName")
-                s["userPhone"] = requester.get("phone")
-        result.append(s)
-    return result
+    req = await db["car_requests"].find_one(q)
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    s = serialize_doc(req)
+    # Enrich buyer info
+    if req.get("userId") and ObjectId.is_valid(req["userId"]):
+        buyer = await db["users"].find_one({"_id": ObjectId(req["userId"])})
+        if buyer:
+            s["buyerName"] = buyer.get("fullName")
+            s["buyerPhone"] = buyer.get("phone")
+            s["buyerWhatsapp"] = buyer.get("whatsapp")
+            s["buyerEmail"] = buyer.get("email")
+    return s
+
+
+#  DEALER: RESPOND TO REQUESTS 
+
+@router.post("/requests/{request_id}/respond")
+async def dealer_respond_to_request(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Dealer responds to a request. Can:
+    - accept: confirm they can fulfil the original request
+    - counter: offer an alternative car with full details
+    Accepted request disappears from general pool, stays on this dealer only.
+    """
+    db = get_db()
+    from app.modules.dealers.service import get_dealer_by_user_id
+    try:
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Not a dealer")
+
+    req = None
+    if ObjectId.is_valid(request_id):
+        req = await db["car_requests"].find_one({"_id": ObjectId(request_id)})
+    if not req:
+        req = await db["car_requests"].find_one({"requestId": request_id})
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    response_type = data.get("type", "accept")  # "accept" | "counter"
+    update = {
+        "dealerId": str(dealer["_id"]),
+        "dealerName": dealer.get("companyName"),
+        "dealerResponse": data.get("message", ""),
+        "dealerResponseAt": datetime.utcnow(),
+        "updatedAt": datetime.utcnow(),
+    }
+
+    if response_type == "counter":
+        update["status"] = "countered"
+        update["counterOffer"] = {
+            "carBrand": data.get("altBrand", ""),
+            "carModel": data.get("altModel", ""),
+            "carYear": data.get("altYear"),
+            "carColor": data.get("altColor", ""),
+            "condition": data.get("altCondition", ""),
+            "price": data.get("altPrice"),
+            "currency": data.get("altCurrency", "NGN"),
+            "description": data.get("altDescription", ""),
+            "estimatedDelivery": data.get("estimatedDelivery", ""),
+            "images": data.get("altImages", []),
+            "offeredAt": datetime.utcnow(),
+        }
+    else:
+        update["status"] = "accepted_by_dealer"
+        update["journeyStarted"] = True
+        update["journeyStartedAt"] = datetime.utcnow()
+        # Setup empty journey milestones
+        update["journey"] = {
+            "paymentPlan": data.get("paymentPlan"),  # {"type": "installmental", "installments": [...]}
+            "milestones": [],
+        }
+
+    await db["car_requests"].update_one({"_id": req["_id"]}, {"$set": update})
+
+    # Notify buyer
+    if req.get("userId") and ObjectId.is_valid(req["userId"]):
+        title = "Dealer Responded to Your Request"
+        msg = (f"{dealer.get('companyName')} can fulfil your request! The journey begins."
+               if response_type == "accept"
+               else f"{dealer.get('companyName')} has an alternative offer for your vehicle request.")
+        await db["notifications"].insert_one({
+            "receiverId": req["userId"], "senderId": str(current_user["_id"]),
+            "type": "request", "title": title, "message": msg,
+            "isRead": False, "createdAt": datetime.utcnow(),
+            "data": {"requestId": request_id},
+        })
+
+    return {"message": "Response sent", "status": update["status"]}
+
+
+@router.post("/requests/{request_id}/milestone")
+async def add_journey_milestone(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Dealer adds a shipping/journey milestone with optional evidence.
+    Stages: payment_received | car_purchased | shipped | arrived_country | in_transit | delivered
+    """
+    db = get_db()
+    from app.modules.dealers.service import get_dealer_by_user_id
+    try:
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Not a dealer")
+
+    req = None
+    if ObjectId.is_valid(request_id):
+        req = await db["car_requests"].find_one({"_id": ObjectId(request_id)})
+    if not req:
+        req = await db["car_requests"].find_one({"requestId": request_id})
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    milestone = {
+        "id": gen_id("MS"),
+        "stage": data.get("stage", "update"),
+        "title": data.get("title", "Update"),
+        "description": data.get("description", ""),
+        "evidence": data.get("evidence", []),  # list of image/doc URLs
+        "addedAt": datetime.utcnow(),
+        "addedBy": "dealer",
+    }
+
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {
+            "$push": {"journey.milestones": milestone},
+            "$set": {"updatedAt": datetime.utcnow(), "lastMilestoneStage": data.get("stage")},
+        }
+    )
+
+    # If final delivery stage, mark completed
+    if data.get("stage") == "delivered":
+        await db["car_requests"].update_one(
+            {"_id": req["_id"]},
+            {"$set": {"status": "completed", "completedAt": datetime.utcnow()}}
+        )
+
+    # Notify buyer
+    if req.get("userId") and ObjectId.is_valid(req["userId"]):
+        await db["notifications"].insert_one({
+            "receiverId": req["userId"], "senderId": str(current_user["_id"]),
+            "type": "request_update",
+            "title": f"Order Update: {data.get('title', 'New update')}",
+            "message": data.get("description", "Your order has been updated."),
+            "isRead": False, "createdAt": datetime.utcnow(),
+            "data": {"requestId": request_id, "stage": data.get("stage")},
+        })
+
+    return {"message": "Milestone added", "milestone": milestone}
+
+
+@router.post("/requests/{request_id}/payment-plan")
+async def set_payment_plan(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """Dealer sets up the payment plan for an accepted request."""
+    db = get_db()
+    from app.modules.dealers.service import get_dealer_by_user_id
+    try:
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Not a dealer")
+
+    req = None
+    if ObjectId.is_valid(request_id):
+        req = await db["car_requests"].find_one({"_id": ObjectId(request_id)})
+    if not req:
+        req = await db["car_requests"].find_one({"requestId": request_id})
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    plan = {
+        "type": data.get("type", "full"),  # "full" | "installmental"
+        "totalAmount": data.get("totalAmount"),
+        "currency": data.get("currency", "NGN"),
+        "installments": data.get("installments", []),  # [{amount, dueDate, label, paid: false}]
+        "createdAt": datetime.utcnow(),
+    }
+
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {"journey.paymentPlan": plan, "updatedAt": datetime.utcnow()}}
+    )
+
+    # Notify buyer
+    if req.get("userId") and ObjectId.is_valid(req["userId"]):
+        await db["notifications"].insert_one({
+            "receiverId": req["userId"], "senderId": str(current_user["_id"]),
+            "type": "request",
+            "title": "Payment Plan Set",
+            "message": f"Your dealer has set up a payment plan for your order.",
+            "isRead": False, "createdAt": datetime.utcnow(),
+            "data": {"requestId": request_id},
+        })
+
+    return {"message": "Payment plan saved", "plan": plan}
+
+
+@router.patch("/requests/{request_id}/payment/{installment_index}")
+async def mark_installment_paid(
+    request_id: str,
+    installment_index: int,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """Dealer marks an installment as paid with optional receipt evidence."""
+    db = get_db()
+    req = None
+    if ObjectId.is_valid(request_id):
+        req = await db["car_requests"].find_one({"_id": ObjectId(request_id)})
+    if not req:
+        req = await db["car_requests"].find_one({"requestId": request_id})
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+
+    field = f"journey.paymentPlan.installments.{installment_index}"
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {
+            f"{field}.paid": True,
+            f"{field}.paidAt": datetime.utcnow(),
+            f"{field}.evidence": data.get("evidence", ""),
+            "updatedAt": datetime.utcnow(),
+        }}
+    )
+    return {"message": "Payment recorded"}

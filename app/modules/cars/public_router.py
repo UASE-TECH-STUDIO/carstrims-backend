@@ -102,7 +102,32 @@ async def public_car_feed(
     query["dealerId"] = {"$in": approved_ids}
 
     total = await db["car_listings"].count_documents(query)
-    cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
+
+    if sort == "score":
+        # Smart feed: boost recency + engagement + random jitter so feed varies on refresh
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {
+                "ageHours": {"$divide": [
+                    {"$subtract": [datetime.utcnow(), {"$ifNull": ["$createdAt", datetime.utcnow()]}]},
+                    3600000
+                ]}
+            }},
+            {"$addFields": {
+                "feedScore": {"$add": [
+                    {"$multiply": [100, {"$exp": {"$multiply": [-0.008, "$ageHours"]}}]},
+                    {"$multiply": [{"$ifNull": ["$viewCount", 0]}, 0.3]},
+                    {"$multiply": [{"$ifNull": ["$likeCount", 0]}, 2.0]},
+                    {"$multiply": [{"$rand": {}}, 15]}
+                ]}
+            }},
+            {"$sort": {"feedScore": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+        ]
+        cars = await db["car_listings"].aggregate(pipeline).to_list(limit)
+    else:
+        cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
 
     result = []
     for car in cars:
