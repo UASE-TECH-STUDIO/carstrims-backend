@@ -331,6 +331,103 @@ async def buyer_cancel_request(
     return {"message": "Request cancelled"}
 
 
+
+@router.patch("/requests/{request_id}")
+async def edit_request(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """Buyer edits their own request - only allowed while status is pending."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    req = await db["car_requests"].find_one(
+        {"$or": [{"requestId": request_id},
+                 {"_id": ObjectId(request_id) if ObjectId.is_valid(request_id) else None}],
+         "userId": uid}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+    if req.get("status") not in ("pending",):
+        from fastapi import HTTPException
+        raise HTTPException(400, "Request can only be edited while it is still pending")
+
+    allowed = [
+        "carBrand","carModel","carYear","carColor","condition","transmission",
+        "fuelType","budget","paymentType","description",
+        "referencePhoto","referencePhotos","dealerId","dealerName",
+    ]
+    update = {k: v for k, v in data.items() if k in allowed}
+    update["updatedAt"] = datetime.utcnow()
+    update["editedAt"]  = datetime.utcnow()
+
+    # Re-resolve dealerId to dealer name if changed
+    if "dealerId" in update and update["dealerId"]:
+        dealer = await db["dealer_organizations"].find_one(
+            {"_id": ObjectId(update["dealerId"])} if ObjectId.is_valid(str(update["dealerId"])) else {"dealerId": str(update["dealerId"])}
+        )
+        if dealer:
+            update["dealerName"] = dealer.get("companyName", "")
+
+    await db["car_requests"].update_one({"_id": req["_id"]}, {"$set": update})
+    updated = await db["car_requests"].find_one({"_id": req["_id"]})
+    return serialize_doc(updated)
+
+
+@router.post("/requests/{request_id}/abort")
+async def abort_request(
+    request_id: str,
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Buyer aborts a request at any stage (pending, accepted, in-progress).
+    Requires a reason. Notifies dealer if one is assigned.
+    """
+    db = get_db()
+    uid = str(current_user["_id"])
+    req = await db["car_requests"].find_one(
+        {"$or": [{"requestId": request_id},
+                 {"_id": ObjectId(request_id) if ObjectId.is_valid(request_id) else None}],
+         "userId": uid}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found")
+    if req.get("status") in ("cancelled", "completed", "declined"):
+        from fastapi import HTTPException
+        raise HTTPException(400, f"Request is already {req.get('status')} and cannot be aborted")
+
+    reason = data.get("reason", "Aborted by buyer")
+    await db["car_requests"].update_one(
+        {"_id": req["_id"]},
+        {"$set": {
+            "status": "aborted",
+            "abortReason": reason,
+            "abortedAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow(),
+        }}
+    )
+
+    # Notify dealer if assigned
+    if req.get("dealerId") and ObjectId.is_valid(str(req["dealerId"])):
+        dealer_doc = await db["dealer_organizations"].find_one({"_id": ObjectId(req["dealerId"])})
+        if dealer_doc and dealer_doc.get("userId"):
+            await db["notifications"].insert_one({
+                "receiverId": str(dealer_doc["userId"]),
+                "senderId": uid,
+                "type": "request",
+                "title": "Order Aborted",
+                "message": f"{current_user.get('fullName','Buyer')} has aborted their vehicle request. Reason: {reason}",
+                "isRead": False,
+                "createdAt": datetime.utcnow(),
+                "data": {"requestId": request_id},
+            })
+
+    return {"message": "Request aborted", "reason": reason}
+
+
 @router.get("/requests/dealer")
 async def get_dealer_requests(
     status: str = None,
