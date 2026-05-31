@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user, require_admin
+from app.auth.dependencies import get_current_user
 from app.modules.dealers.service import serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
@@ -401,12 +401,16 @@ async def send_message_with_attachment(
 @router.post("/command/reset-password/{target_user_id}")
 async def admin_reset_password_command(
     target_user_id: str,
-    admin: dict = Depends(require_admin),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Admin command: reset a user's password and notify them.
     Called via !password command in chat or from admin dashboard.
     """
+    if current_user.get("role") != "SYSTEM_ADMIN":
+        from fastapi import HTTPException
+        raise HTTPException(403, "Admin access required")
+    admin = current_user
     from app.auth.password import hash_password
     import random, string
     db = get_db()
