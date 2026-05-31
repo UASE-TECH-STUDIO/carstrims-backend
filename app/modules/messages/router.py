@@ -1,7 +1,7 @@
 ﻿from fastapi import APIRouter, Depends, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_admin
 from app.modules.dealers.service import serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
