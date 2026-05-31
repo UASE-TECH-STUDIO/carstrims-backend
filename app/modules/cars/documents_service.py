@@ -1,9 +1,9 @@
 ﻿"""
 Document generation service.
 Returns structured data for frontend to render as PDF/CSV/Print:
-  - Proforma Invoice  (BEFORE sale — quote/estimate, not a bill)
-  - Standard Invoice  (AFTER confirmation — official legally binding bill)
-  - Receipt           (AFTER payment — proof money changed hands)
+  - Proforma Invoice  (BEFORE sale  quote/estimate, not a bill)
+  - Standard Invoice  (AFTER confirmation  official legally binding bill)
+  - Receipt           (AFTER payment  proof money changed hands)
 """
 from datetime import datetime, timedelta
 from bson import ObjectId
@@ -76,7 +76,7 @@ def _car_block(car: dict) -> dict:
 
 async def generate_proforma_invoice(dealer_id: str, car_id: str) -> dict:
     """
-    PROFORMA INVOICE — issued BEFORE the sale is confirmed.
+    PROFORMA INVOICE  issued BEFORE the sale is confirmed.
     It is a quote/estimate, NOT a demand for payment.
     Valid for 7 days from issuance.
     """
@@ -125,7 +125,7 @@ async def generate_proforma_invoice(dealer_id: str, car_id: str) -> dict:
 
 async def generate_standard_invoice(dealer_id: str, car_id: str) -> dict:
     """
-    STANDARD INVOICE — issued AFTER the car is confirmed/delivered.
+    STANDARD INVOICE  issued AFTER the car is confirmed/delivered.
     Official legally binding demand for payment.
     Includes VAT, payment due date. Goes into accounting books.
     """
@@ -163,6 +163,9 @@ async def generate_standard_invoice(dealer_id: str, car_id: str) -> dict:
             "name": buyer_name,
             "phone": buyer_phone,
             "email": buyer_email,
+            "address": sale.get("buyerAddress", "") if sale else "",
+            "paymentType": sale.get("paymentType", "full") if sale else "full",
+            "installmentPlan": sale.get("installmentPlan") if sale else None,
         },
         "car": _car_block(car),
         "lineItems": [
@@ -203,7 +206,7 @@ async def generate_standard_invoice(dealer_id: str, car_id: str) -> dict:
 
 async def generate_receipt(dealer_id: str, car_id: str) -> dict:
     """
-    RECEIPT — issued AFTER full payment has been received.
+    RECEIPT  issued AFTER full payment has been received.
     Proof that money changed hands. Debt from invoice is now settled.
     """
     db = get_db()
@@ -236,6 +239,9 @@ async def generate_receipt(dealer_id: str, car_id: str) -> dict:
             "name": sale.get("buyerName"),
             "phone": sale.get("buyerPhone"),
             "email": sale.get("buyerEmail"),
+            "address": sale.get("buyerAddress", ""),
+            "paymentType": sale.get("paymentType", "full"),
+            "installmentPlan": sale.get("installmentPlan"),
         },
         "car": _car_block(car),
         "transaction": {
