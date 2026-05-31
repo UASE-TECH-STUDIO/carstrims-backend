@@ -120,9 +120,47 @@ async def my_stats(current_user: dict = Depends(get_current_dealer)):
 
 
 @router.get("/me/reports")
-async def my_reports(current_user: dict = Depends(get_current_dealer)):
+async def my_reports(
+    current_user: dict = Depends(get_current_dealer),
+    dateFrom: Optional[str] = Query(None),
+    dateTo:   Optional[str] = Query(None),
+    period:   Optional[str] = Query(None),  # "today"|"week"|"month"|"quarter"|"year"|"custom"
+):
+    from datetime import timedelta
     dealer = await get_dealer_by_user_id(str(current_user["_id"]))
-    return await get_dealer_reports(dealer["_id"])
+    now = datetime.utcnow()
+
+    # Resolve date range
+    df = dt = None
+    if period == "today":
+        df = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        dt = now
+    elif period == "week":
+        df = now - timedelta(days=now.weekday())
+        df = df.replace(hour=0, minute=0, second=0, microsecond=0)
+        dt = now
+    elif period == "month":
+        df = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        dt = now
+    elif period == "quarter":
+        q_start_month = ((now.month - 1) // 3) * 3 + 1
+        df = now.replace(month=q_start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+        dt = now
+    elif period == "year":
+        df = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        dt = now
+    elif dateFrom:
+        try:
+            df = datetime.fromisoformat(dateFrom.replace("Z","").split("T")[0])
+        except Exception:
+            pass
+    if dateTo:
+        try:
+            dt = datetime.fromisoformat(dateTo.replace("Z","").split("T")[0]).replace(hour=23, minute=59, second=59)
+        except Exception:
+            pass
+
+    return await get_dealer_reports(dealer["_id"], date_from=df, date_to=dt)
 
 
 @router.get("/me/notifications")

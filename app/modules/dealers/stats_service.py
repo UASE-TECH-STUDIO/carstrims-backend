@@ -14,7 +14,7 @@ async def get_dealer_stats_full(dealer_id: str) -> dict:
     total_partners = await db["partner_links"].count_documents({"dealerId": dealer_id, "status": "approved"})
     pending_partners = await db["partner_links"].count_documents({"dealerId": dealer_id, "status": "pending"})
 
-    # Count ALL requests — both dealer-specific and general (no dealerId)
+    # Count ALL requests  both dealer-specific and general (no dealerId)
     pending_requests = await db["special_requests"].count_documents({
         "$or": [
             {"dealerId": dealer_id, "status": "pending"},
@@ -45,7 +45,7 @@ async def get_dealer_stats_full(dealer_id: str) -> dict:
 
     # Expenses total
     exp_pipeline = [
-        {"$match": {"dealerId": dealer_id}},
+        {"$match": exp_date_match},
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
     ]
     exp_result = await db["expense_records"].aggregate(exp_pipeline).to_list(1)
@@ -103,33 +103,79 @@ async def mark_all_read(user_id: str) -> dict:
     return {"message": "All marked as read"}
 
 
-async def get_dealer_reports(dealer_id: str) -> dict:
+async def get_dealer_reports(dealer_id: str, date_from=None, date_to=None) -> dict:
     db = get_db()
 
-    # Monthly sales last 6 months
+    # Monthly sales - use date range if provided, else last 6 months
     from datetime import timedelta
     now = datetime.utcnow()
     monthly = []
-    for i in range(5, -1, -1):
-        month_start = (now.replace(day=1) - timedelta(days=30*i)).replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
-        month_end = (month_start + timedelta(days=32)).replace(day=1)
-        month_sales = await db["sale_transactions"].aggregate([
-            {"$match": {"dealerId": dealer_id, "soldAt": {"$gte": month_start, "$lt": month_end}}},
-            {"$group": {"_id": None, "revenue": {"$sum": "$sellingPrice"}, "profit": {"$sum": "$profit"}, "count": {"$sum": 1}}},
-        ]).to_list(1)
-        data = month_sales[0] if month_sales else {"revenue": 0, "profit": 0, "count": 0}
-        monthly.append({
-            "month": month_start.strftime("%b %Y"),
-            "revenue": data.get("revenue", 0),
-            "profit": data.get("profit", 0),
-            "count": data.get("count", 0),
-        })
+    if date_from and date_to:
+        # Group by month within the selected range
+        import calendar
+        cursor = date_from.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        while cursor <= date_to:
+            next_month = (cursor + timedelta(days=32)).replace(day=1)
+            cap = min(next_month, date_to)
+            month_sales = await db["sale_transactions"].aggregate([
+                {"$match": {"dealerId": dealer_id, "soldAt": {"$gte": cursor, "$lte": cap}}},
+                {"$group": {"_id": None, "revenue": {"$sum": "$sellingPrice"}, "profit": {"$sum": "$profit"}, "count": {"$sum": 1}}},
+            ]).to_list(1)
+            exp_in_month = await db["expense_records"].aggregate([
+                {"$match": {"dealerId": dealer_id, "date": {"$gte": cursor, "$lte": cap}}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+            ]).to_list(1)
+            d = month_sales[0] if month_sales else {"revenue": 0, "profit": 0, "count": 0}
+            monthly.append({
+                "month": cursor.strftime("%b %Y"),
+                "revenue": d.get("revenue", 0),
+                "profit": d.get("profit", 0),
+                "expenses": exp_in_month[0]["total"] if exp_in_month else 0,
+                "count": d.get("count", 0),
+            })
+            cursor = next_month
+    else:
+        for i in range(5, -1, -1):
+            month_start = (now.replace(day=1) - timedelta(days=30*i)).replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            month_end = (month_start + timedelta(days=32)).replace(day=1)
+            month_sales = await db["sale_transactions"].aggregate([
+                {"$match": {"dealerId": dealer_id, "soldAt": {"$gte": month_start, "$lt": month_end}}},
+                {"$group": {"_id": None, "revenue": {"$sum": "$sellingPrice"}, "profit": {"$sum": "$profit"}, "count": {"$sum": 1}}},
+            ]).to_list(1)
+            exp_in_month = await db["expense_records"].aggregate([
+                {"$match": {"dealerId": dealer_id, "date": {"$gte": month_start, "$lt": month_end}}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+            ]).to_list(1)
+            data = month_sales[0] if month_sales else {"revenue": 0, "profit": 0, "count": 0}
+            monthly.append({
+                "month": month_start.strftime("%b %Y"),
+                "revenue": data.get("revenue", 0),
+                "profit": data.get("profit", 0),
+                "expenses": exp_in_month[0]["total"] if exp_in_month else 0,
+                "count": data.get("count", 0),
+            })
+
+    # Build date match for filtered queries
+    date_match = {"dealerId": dealer_id}
+    if date_from:
+        date_match.setdefault("soldAt", {})
+        date_match["soldAt"]["$gte"] = date_from
+    if date_to:
+        date_match.setdefault("soldAt", {})
+        date_match["soldAt"]["$lte"] = date_to
+    exp_date_match = {"dealerId": dealer_id}
+    if date_from:
+        exp_date_match.setdefault("date", {})
+        exp_date_match["date"]["$gte"] = date_from
+    if date_to:
+        exp_date_match.setdefault("date", {})
+        exp_date_match["date"]["$lte"] = date_to
 
     # Top brands sold
     brand_pipeline = [
-        {"$match": {"dealerId": dealer_id}},
+        {"$match": date_match},
         {"$group": {"_id": "$carBrand", "count": {"$sum": 1}, "revenue": {"$sum": "$sellingPrice"}}},
         {"$sort": {"count": -1}},
         {"$limit": 5},
@@ -138,14 +184,14 @@ async def get_dealer_reports(dealer_id: str) -> dict:
 
     # Payment method breakdown
     pay_pipeline = [
-        {"$match": {"dealerId": dealer_id}},
+        {"$match": date_match},
         {"$group": {"_id": "$paymentMethod", "count": {"$sum": 1}, "total": {"$sum": "$sellingPrice"}}},
     ]
     payment_breakdown = await db["sale_transactions"].aggregate(pay_pipeline).to_list(10)
 
     # Staff performance
     staff_pipeline = [
-        {"$match": {"dealerId": dealer_id}},
+        {"$match": date_match},
         {"$group": {"_id": "$staffId", "sales": {"$sum": 1}, "revenue": {"$sum": "$sellingPrice"}}},
         {"$sort": {"sales": -1}},
         {"$limit": 5},
@@ -163,13 +209,40 @@ async def get_dealer_reports(dealer_id: str) -> dict:
 
     # Expenses by category
     exp_pipeline = [
-        {"$match": {"dealerId": dealer_id}},
+        {"$match": exp_date_match},
         {"$group": {"_id": "$category", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
         {"$sort": {"total": -1}},
     ]
     expenses_by_cat = await db["expense_records"].aggregate(exp_pipeline).to_list(10)
 
-    stats = await get_dealer_stats_full(dealer_id)
+    # Compute filtered summary if dates given
+    if date_from or date_to:
+        sale_match = {"dealerId": dealer_id}
+        if date_from: sale_match.setdefault("soldAt", {}); sale_match["soldAt"]["$gte"] = date_from
+        if date_to:   sale_match.setdefault("soldAt", {}); sale_match["soldAt"]["$lte"] = date_to
+        exp_match   = {"dealerId": dealer_id}
+        if date_from: exp_match.setdefault("date", {}); exp_match["date"]["$gte"] = date_from
+        if date_to:   exp_match.setdefault("date", {}); exp_match["date"]["$lte"] = date_to
+        s_agg = await db["sale_transactions"].aggregate([
+            {"$match": sale_match},
+            {"$group": {"_id": None, "revenue": {"$sum": "$sellingPrice"}, "profit": {"$sum": "$profit"}, "count": {"$sum": 1}, "sold": {"$sum": 1}}},
+        ]).to_list(1)
+        e_agg = await db["expense_records"].aggregate([
+            {"$match": exp_match},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ]).to_list(1)
+        sd = s_agg[0] if s_agg else {}
+        stats = {
+            "totalRevenue": sd.get("revenue", 0),
+            "totalProfit": sd.get("profit", 0),
+            "totalExpenses": e_agg[0]["total"] if e_agg else 0,
+            "totalSales": sd.get("count", 0),
+            "soldCars": sd.get("sold", 0),
+            "totalCars": await db["car_listings"].count_documents({"dealerId": dealer_id}),
+            "totalStaff": await db["staff_accounts"].count_documents({"dealerId": dealer_id}),
+        }
+    else:
+        stats = await get_dealer_stats_full(dealer_id)
 
     return {
         "summary": stats,
