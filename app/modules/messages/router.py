@@ -24,7 +24,7 @@ class MessageSend(BaseModel):
 
 class ConversationStart(BaseModel):
     receiverId: str
-    message: Optional[str] = None      # optional — user drafts it themselves
+    message: Optional[str] = None      # optional  user drafts it themselves
     carId: Optional[str] = None        # car being enquired about
     carBrand: Optional[str] = None
     carModel: Optional[str] = None
@@ -229,7 +229,7 @@ async def send_message(
     await db["conversations"].update_one(
         {"conversationId": conv_id},
         {"$set": {
-            "lastMessage": data.imageUrl and "📷 Photo" or data.message,
+            "lastMessage": data.imageUrl and " Photo" or data.message,
             "lastMessageAt": now,
         }},
     )
@@ -239,7 +239,7 @@ async def send_message(
         "senderId": uid,
         "type": "message",
         "title": f"New message from {current_user.get('fullName', 'Someone')}",
-        "message": data.imageUrl and "📷 Sent a photo" or data.message[:80],
+        "message": data.imageUrl and " Sent a photo" or data.message[:80],
         "isRead": False,
         "data": {"conversationId": conv_id},
         "createdAt": now,
@@ -368,7 +368,7 @@ async def send_message_with_attachment(
         "conversationId": conv_id,
         "senderId": uid,
         "receiverId": receiver_id,
-        "message": message or ("📷 Photo" if attachmentType == "image" else "🎥 Video" if attachmentType == "video" else "📄 Document"),
+        "message": message or (" Photo" if attachmentType == "image" else " Video" if attachmentType == "video" else " Document"),
         "attachmentUrl": attachmentUrl,
         "attachmentName": attachmentName,
         "attachmentType": attachmentType,
@@ -396,3 +396,51 @@ async def send_message_with_attachment(
         })
     return serialize_doc(msg_doc)
 
+
+
+@router.post("/command/reset-password/{target_user_id}")
+async def admin_reset_password_command(
+    target_user_id: str,
+    admin: dict = Depends(require_admin),
+):
+    """
+    Admin command: reset a user's password and notify them.
+    Called via !password command in chat or from admin dashboard.
+    """
+    from app.auth.password import hash_password
+    import random, string
+    db = get_db()
+
+    q = {"_id": ObjectId(target_user_id)} if ObjectId.is_valid(target_user_id) else {"userId": target_user_id}
+    user = await db["users"].find_one(q)
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(404, "User not found")
+
+    new_password = "Carstrims@" + "".join(random.choices(string.digits, k=6))
+    await db["users"].update_one(q, {"$set": {"passwordHash": hash_password(new_password), "updatedAt": datetime.utcnow()}})
+
+    # Notify user via all channels
+    try:
+        from app.services.notifications import notify_password_reset
+        import asyncio
+        asyncio.create_task(notify_password_reset(user, new_password, method="email"))
+    except Exception:
+        pass
+
+    await db["notifications"].insert_one({
+        "receiverId": str(user["_id"]),
+        "type": "general",
+        "title": "Password Reset",
+        "message": f"Your password has been reset by admin. New temporary password: {new_password}  Change it after login.",
+        "isRead": False,
+        "createdAt": datetime.utcnow(),
+    })
+
+    return {
+        "message": "Password reset successfully",
+        "newPassword": new_password,
+        "userId": str(user["_id"]),
+        "userEmail": user.get("email"),
+        "userName": user.get("fullName"),
+    }

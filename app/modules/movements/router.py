@@ -192,3 +192,137 @@ async def edit_movement(
     )
     updated = await db["vehicle_movement_logs"].find_one({"movementId": movement_id})
     return serialize_doc(updated)
+
+
+#  MULTI-DEALER MOVEMENT APPROVAL 
+
+@router.post("/pending-approval")
+async def request_movement_approval(
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Staff requests approval for a car movement.
+    Notifies ALL dealers on the platform (or specific dealer if dealerId given).
+    Any dealer who approves will lock the movement to them.
+    """
+    db = get_db()
+    uid = str(current_user["_id"])
+
+    # Build movement approval request
+    req_id = "MVREQ-" + "".join(__import__("random").choices(__import__("string").ascii_uppercase + __import__("string").digits, k=8))
+    doc = {
+        "requestId": req_id,
+        "requestedBy": uid,
+        "requestedByName": current_user.get("fullName"),
+        "carId": data.get("carId"),
+        "purpose": data.get("purpose"),
+        "expectedReturnTime": data.get("expectedReturnTime"),
+        "notes": data.get("notes"),
+        "takenByName": data.get("takenByName"),
+        "takenByPhone": data.get("takenByPhone"),
+        "status": "pending_approval",
+        "approvedBy": None,
+        "approvedAt": None,
+        "targetDealerId": data.get("dealerId"),  # None = notify all
+        "createdAt": datetime.utcnow(),
+    }
+    await db["movement_approval_requests"].insert_one(doc)
+
+    # Notify dealers
+    if data.get("dealerId") and ObjectId.is_valid(str(data["dealerId"])):
+        # Specific dealer
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(data["dealerId"])})
+        if dealer and dealer.get("userId"):
+            await db["notifications"].insert_one({
+                "receiverId": str(dealer["userId"]),
+                "senderId": uid,
+                "type": "movement_approval",
+                "title": "Vehicle Movement Approval Requested",
+                "message": f"{current_user.get('fullName')} is requesting approval to move {data.get('carId')} for {data.get('purpose')}.",
+                "isRead": False,
+                "createdAt": datetime.utcnow(),
+                "data": {"requestId": req_id},
+            })
+    else:
+        # Notify all active dealers
+        dealers = await db["dealer_organizations"].find({"status": "approved"}, {"userId": 1}).to_list(1000)
+        notifs = [{
+            "receiverId": str(d["userId"]),
+            "senderId": uid,
+            "type": "movement_approval",
+            "title": "Vehicle Movement Approval Requested",
+            "message": f"{current_user.get('fullName')} requests approval to move vehicle {data.get('carId')} for {data.get('purpose')}. Approve if available.",
+            "isRead": False,
+            "createdAt": datetime.utcnow(),
+            "data": {"requestId": req_id},
+        } for d in dealers if d.get("userId")]
+        if notifs:
+            await db["notifications"].insert_many(notifs)
+
+    return {"message": "Approval request sent", "requestId": req_id}
+
+
+@router.post("/pending-approval/{req_id}/approve")
+async def approve_movement_request(
+    req_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Any dealer can approve a pending movement request."""
+    db = get_db()
+    from app.modules.dealers.service import get_dealer_by_user_id
+    try:
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(403, "Not a dealer account")
+
+    req = await db["movement_approval_requests"].find_one(
+        {"requestId": req_id, "status": "pending_approval"}
+    )
+    if not req:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Request not found or already approved")
+
+    await db["movement_approval_requests"].update_one(
+        {"requestId": req_id},
+        {"$set": {
+            "status": "approved",
+            "approvedBy": str(current_user["_id"]),
+            "approvedByName": current_user.get("fullName"),
+            "approvedByDealerId": str(dealer["_id"]),
+            "approvedByDealerName": dealer.get("companyName"),
+            "approvedAt": datetime.utcnow(),
+        }}
+    )
+
+    # Notify requester
+    await db["notifications"].insert_one({
+        "receiverId": str(req["requestedBy"]),
+        "senderId": str(current_user["_id"]),
+        "type": "movement_approved",
+        "title": "Movement Approved",
+        "message": f"{dealer.get('companyName')} has approved your vehicle movement request for {req.get('carId')}.",
+        "isRead": False,
+        "createdAt": datetime.utcnow(),
+        "data": {"requestId": req_id},
+    })
+
+    return {
+        "message": "Movement approved",
+        "approvedBy": current_user.get("fullName"),
+        "dealerName": dealer.get("companyName"),
+    }
+
+
+@router.get("/pending-approvals")
+async def get_pending_movement_approvals(
+    current_user: dict = Depends(get_current_user),
+):
+    """Get all pending movement approval requests - available to all dealers."""
+    db = get_db()
+    reqs = await db["movement_approval_requests"].find(
+        {"status": "pending_approval"}
+    ).sort("createdAt", -1).to_list(100)
+    from app.modules.dealers.service import serialize_doc
+    return [serialize_doc(r) for r in reqs]

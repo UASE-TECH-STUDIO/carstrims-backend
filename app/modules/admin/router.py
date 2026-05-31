@@ -31,6 +31,7 @@ class BroadcastRequest(BaseModel):
     documentUrl: Optional[str] = None
     documentName: Optional[str] = None
     documentType: Optional[str] = None           # "image" | "video" | "document"
+    sendEmail: bool = False                       # also send email to recipients
 
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -478,8 +479,30 @@ async def reset_user_password(user_id: str, data: dict = Body({}), admin=Depends
     from app.auth.password import hash_password
     db = get_db()
     new_password = data.get("newPassword", "Reset@" + "".join(random.choices(string.digits + string.ascii_letters, k=8)))
-    await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"passwordHash": hash_password(new_password)}})
-    return {"message": "Password reset", "newPassword": new_password}
+    q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
+    user = await db["users"].find_one(q)
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(404, "User not found")
+    await db["users"].update_one(q, {"$set": {"passwordHash": hash_password(new_password), "updatedAt": datetime.utcnow()}})
+
+    # Notify user via email + in-app notification
+    try:
+        from app.services.notifications import notify_password_reset
+        import asyncio
+        asyncio.create_task(notify_password_reset(user, new_password, method="email"))
+    except Exception:
+        pass
+
+    await db["notifications"].insert_one({
+        "receiverId": str(user["_id"]),
+        "type": "general",
+        "title": "Password Reset by Admin",
+        "message": f"Your password has been reset. New temporary password: {new_password}  Please change it after login.",
+        "isRead": False,
+        "createdAt": datetime.utcnow(),
+    })
+    return {"message": "Password reset and user notified", "newPassword": new_password}
 
 
 #  CAR MODERATION 
@@ -598,6 +621,24 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
         await db["conversations"].insert_many(conv_docs)
     if notif_docs:
         await db["notifications"].insert_many(notif_docs)
+
+    # Send email to all recipients who have emails
+    try:
+        from app.services.notifications import send_broadcast_email
+        import asyncio
+        if data.sendEmail:
+            recipient_users = await db["users"].find(
+                {"_id": {"$in": [ObjectId(uid) for uid in user_ids if ObjectId.is_valid(uid)]}},
+                {"email": 1, "fullName": 1}
+            ).to_list(10000)
+            asyncio.create_task(send_broadcast_email(
+                recipient_users,
+                data.title,
+                data.message,
+                data.title,
+            ))
+    except Exception:
+        pass
 
     await db["broadcasts"].insert_one({
         "broadcastId": broadcast_id, "adminId": admin_id,
