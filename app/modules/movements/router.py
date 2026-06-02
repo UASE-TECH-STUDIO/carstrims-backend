@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_dealer, get_current_user
@@ -326,3 +326,64 @@ async def get_pending_movement_approvals(
     ).sort("createdAt", -1).to_list(100)
     from app.modules.dealers.service import serialize_doc
     return [serialize_doc(r) for r in reqs]
+
+@router.get("/approvers")
+async def get_available_approvers(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Returns list of all dealers and staff for this company
+    who can approve a movement. Used to build the 'send to' picker.
+    """
+    from app.modules.dealers.service import get_dealer_by_user_id
+    db = get_db()
+    uid = str(current_user["_id"])
+    role = current_user.get("role")
+
+    # Resolve dealerId
+    dealer_id = None
+    if role == "DEALER_ADMIN":
+        try:
+            d = await get_dealer_by_user_id(uid)
+            dealer_id = str(d["_id"])
+        except Exception:
+            pass
+    elif role == "DEALER_STAFF":
+        staff = await db["staff_accounts"].find_one({"userId": uid})
+        if staff:
+            dealer_id = str(staff.get("dealerId",""))
+
+    if not dealer_id:
+        return {"approvers": []}
+
+    approvers = []
+
+    # Add the dealer admin
+    dealer_doc = await db["dealer_organizations"].find_one(
+        {"_id": ObjectId(dealer_id)} if ObjectId.is_valid(dealer_id) else {"dealerId": dealer_id}
+    )
+    if dealer_doc:
+        owner = await db["users"].find_one({"_id": ObjectId(dealer_doc["userId"])}) if dealer_doc.get("userId") else None
+        approvers.append({
+            "id":    str(dealer_doc["_id"]),
+            "userId": str(dealer_doc.get("userId","")),
+            "name":  owner.get("fullName","Dealer") if owner else dealer_doc.get("companyName","Dealer"),
+            "role":  "DEALER_ADMIN",
+            "position": "Dealer / Owner",
+        })
+
+    # Add all active staff
+    staff_list = await db["staff_accounts"].find(
+        {"dealerId": dealer_id, "status": {"$nin": ["suspended","deleted"]}}
+    ).to_list(50)
+    for s in staff_list:
+        approvers.append({
+            "id":       str(s["_id"]),
+            "userId":   str(s.get("userId","")),
+            "name":     s.get("fullName","Staff"),
+            "role":     "DEALER_STAFF",
+            "position": s.get("position","Staff"),
+            "permissions": s.get("permissions",[]),
+        })
+
+    return {"approvers": approvers}

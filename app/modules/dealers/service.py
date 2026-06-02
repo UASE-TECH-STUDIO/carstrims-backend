@@ -138,8 +138,24 @@ async def get_dealer_by_id(dealer_id: str) -> dict:
     return serialize_doc(dealer)
 
 
-async def get_dealer_by_user_id(user_id: str) -> dict:
+async def get_dealer_by_user_id(user_id: str, current_user: dict = None) -> dict:
+    """
+    Resolves the dealer for a user_id.
+    If current_user has _resolved_dealer_id (staff), uses that directly.
+    """
     db = get_db()
+
+    # Staff: dealer id already resolved by dependency
+    if current_user and current_user.get("_resolved_dealer_id"):
+        from bson import ObjectId
+        dealer_id = current_user["_resolved_dealer_id"]
+        if ObjectId.is_valid(dealer_id):
+            dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
+        else:
+            dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+        if dealer:
+            return serialize_doc(dealer)
+
     dealer = await db["dealer_organizations"].find_one({"userId": user_id})
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer profile not found")

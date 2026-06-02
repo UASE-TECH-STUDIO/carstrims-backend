@@ -1,7 +1,7 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_dealer
+from app.auth.dependencies import get_current_dealer, get_current_dealer_or_staff
 from app.modules.inventory.service import (
     create_expense, get_dealer_expenses, get_car_expenses,
     delete_expense, get_sales_log,
@@ -48,8 +48,8 @@ router = APIRouter(prefix="/api/v1/inventory", tags=["Inventory"])
 
 
 @router.post("/expenses")
-async def add_expense(data: ExpenseCreateRequest, current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def add_expense(data: ExpenseCreateRequest, current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await create_expense(dealer["_id"], str(current_user["_id"]), data.model_dump())
 
 
@@ -59,15 +59,15 @@ async def list_expenses(
     category: Optional[str] = Query(None),
     skip: int = Query(0),
     limit: int = Query(30),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_dealer_expenses(dealer["_id"], car_id, category, skip, limit)
 
 
 @router.get("/expenses/car/{car_id}")
-async def car_expenses(car_id: str, current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def car_expenses(car_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_car_expenses(car_id, dealer["_id"])
 
 
@@ -75,10 +75,10 @@ async def car_expenses(car_id: str, current_user: dict = Depends(get_current_dea
 async def edit_expense(
     expense_id: str,
     data: dict = Body(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(expense_id):
         query = {"_id": ObjectId(expense_id), "dealerId": dealer["_id"]}
@@ -113,8 +113,8 @@ async def edit_expense(
 
 
 @router.delete("/expenses/{expense_id}")
-async def remove_expense(expense_id: str, current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def remove_expense(expense_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await delete_expense(expense_id, dealer["_id"])
 
 
@@ -123,19 +123,19 @@ async def list_sales(
     skip: int = Query(0),
     limit: int = Query(30),
     search: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_sales_log(dealer["_id"], skip, limit, search)
 
 
 @router.post("/sales/manual")
 async def add_manual_sale(
     data: ManualSaleRequest,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     profit = data.sellingPrice - (data.purchasePrice or 0)
     trans_id = "TXN-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
@@ -177,10 +177,10 @@ async def add_manual_sale(
 async def edit_sale(
     transaction_id: str,
     data: SaleUpdateRequest,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     sale = await db["sale_transactions"].find_one({
         "transactionId": transaction_id,
@@ -223,10 +223,10 @@ async def edit_sale(
 @router.post("/sales/{transaction_id}/revert")
 async def revert_sale(
     transaction_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     sale = await db["sale_transactions"].find_one({
         "transactionId": transaction_id,
@@ -256,13 +256,13 @@ async def revert_sale(
     return {"message": "Sale reverted to previous values"}
 
 
-# ── RECEIPT for a completed sale (called by InvoiceGenerator on Sales page) ───
+#  RECEIPT for a completed sale (called by InvoiceGenerator on Sales page) 
 @router.get("/sales/{transaction_id}/receipt")
 async def get_sale_receipt(
     transaction_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Return structured receipt/invoice data for a sale transaction."""
     from app.modules.cars.sale_service import generate_receipt_data
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await generate_receipt_data(str(dealer["_id"]), transaction_id)

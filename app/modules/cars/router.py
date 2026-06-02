@@ -1,7 +1,7 @@
-﻿from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user, get_current_dealer
+from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.cars.service import (
     create_car, get_dealer_cars, update_car, mark_car_sold,
     delete_car, get_public_cars, get_car_by_id,
@@ -15,8 +15,8 @@ router = APIRouter(prefix="/api/v1/cars", tags=["Cars"])
 
 
 @router.post("/")
-async def add_car(data: dict, current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def add_car(data: dict, current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await create_car(dealer["_id"], str(current_user["_id"]), data)
 
 
@@ -26,15 +26,15 @@ async def list_cars(
     search: Optional[str] = Query(None),
     skip: int = Query(0),
     limit: int = Query(20),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_dealer_cars(dealer["_id"], status, search, skip, limit)
 
 
 @router.get("/{car_id}")
-async def get_car(car_id: str, current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def get_car(car_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_car_by_id(car_id, dealer["_id"])
 
 
@@ -42,9 +42,9 @@ async def get_car(car_id: str, current_user: dict = Depends(get_current_dealer))
 async def update_car_details(
     car_id: str,
     data: dict,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     db = get_db()
 
     if ObjectId.is_valid(car_id):
@@ -70,9 +70,9 @@ async def update_car_details(
 async def sell_car(
     car_id: str,
     data: dict,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await mark_car_sold(car_id, dealer["_id"], str(current_user["_id"]), data)
 
 
@@ -80,9 +80,9 @@ async def sell_car(
 async def remove_car(
     car_id: str,
     reason: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     db = get_db()
 
     if ObjectId.is_valid(car_id):
@@ -110,7 +110,7 @@ async def remove_car(
 
 
 
-# ── MARK CAR AS SOLD (from inventory or car detail) ──────────
+#  MARK CAR AS SOLD (from inventory or car detail) 
 from pydantic import BaseModel as _PBM
 from typing import Optional as _Opt
 
@@ -127,65 +127,65 @@ class SaleEntryRequest(_PBM):
 async def mark_car_sold_endpoint(
     car_id: str,
     data: SaleEntryRequest,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     from app.modules.dealers.service import get_dealer_by_user_id
     from app.modules.cars.sale_service import mark_car_sold
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await mark_car_sold(dealer["_id"], str(current_user["_id"]), car_id, data.model_dump())
 
 @router.get("/{car_id}/financial-report")
 async def car_financial_report(
     car_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     from app.modules.dealers.service import get_dealer_by_user_id
     from app.modules.cars.sale_service import get_car_financial_report
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_car_financial_report(dealer["_id"], car_id)
 
 
-# ── DOCUMENT GENERATION ENDPOINTS ─────────────────────────────────────────────
+#  DOCUMENT GENERATION ENDPOINTS 
 
 @router.get("/{car_id}/proforma-invoice")
 async def get_proforma_invoice(
     car_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Proforma Invoice: formal quote BEFORE sale is confirmed."""
     from app.modules.cars.documents_service import generate_proforma_invoice
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await generate_proforma_invoice(str(dealer["_id"]), car_id)
 
 
 @router.get("/{car_id}/invoice")
 async def get_standard_invoice(
     car_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Standard Invoice: official bill AFTER car is confirmed/delivered."""
     from app.modules.cars.documents_service import generate_standard_invoice
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await generate_standard_invoice(str(dealer["_id"]), car_id)
 
 
 @router.get("/{car_id}/receipt")
 async def get_receipt(
     car_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Receipt: proof of payment AFTER money has been received."""
     from app.modules.cars.documents_service import generate_receipt
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await generate_receipt(str(dealer["_id"]), car_id)
 
 
 @router.get("/{car_id}/report")
 async def get_car_report(
     car_id: str,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Full car financial report: purchase price, expenses, sale, profit/loss."""
     from app.modules.cars.sale_service import get_car_financial_report
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_car_financial_report(str(dealer["_id"]), car_id)

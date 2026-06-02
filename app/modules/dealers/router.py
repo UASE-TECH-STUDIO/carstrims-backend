@@ -1,4 +1,4 @@
-﻿# Add this to your existing dealers router (app/modules/dealers/router.py)
+# Add this to your existing dealers router (app/modules/dealers/router.py)
 # Replace the existing /setup endpoint with this version.
 # Key change: after dealer profile is created, user status moves from
 # "pending_setup" to "awaiting_approval" so admin can see them in the approvals queue.
@@ -6,7 +6,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user, get_current_dealer
+from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.dealers.service import (
     create_dealer_profile, get_dealer_by_user_id,
     update_dealer_profile, serialize_doc,
@@ -107,27 +107,27 @@ async def get_my_dealer(current_user: dict = Depends(get_current_user)):
 @router.patch("/me")
 async def update_my_dealer(
     data: dict = Body(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await update_dealer_profile(dealer["_id"], data)
 
 
 @router.get("/me/stats")
-async def my_stats(current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def my_stats(current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_dealer_stats_full(dealer["_id"])
 
 
 @router.get("/me/reports")
 async def my_reports(
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
     dateFrom: Optional[str] = Query(None),
     dateTo:   Optional[str] = Query(None),
     period:   Optional[str] = Query(None),  # "today"|"week"|"month"|"quarter"|"year"|"custom"
 ):
     from datetime import timedelta
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     now = datetime.utcnow()
 
     # Resolve date range
@@ -167,19 +167,19 @@ async def my_reports(
 async def my_notifications(
     skip: int = Query(0),
     limit: int = Query(50),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_dealer_notifications(dealer["_id"], str(current_user["_id"]), skip, limit)
 
 
 @router.post("/me/notifications/{notif_id}/read")
-async def read_notification(notif_id: str, current_user: dict = Depends(get_current_dealer)):
+async def read_notification(notif_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
     return await mark_notification_read(notif_id, str(current_user["_id"]))
 
 
 @router.post("/me/notifications/read-all")
-async def read_all_notifications(current_user: dict = Depends(get_current_dealer)):
+async def read_all_notifications(current_user: dict = Depends(get_current_dealer_or_staff)):
     return await mark_all_read(str(current_user["_id"]))
 
 # --- APPOINTMENT ENDPOINTS ---------------------------------------------------
@@ -187,11 +187,11 @@ async def read_all_notifications(current_user: dict = Depends(get_current_dealer
 @router.get("/me/appointments")
 async def get_dealer_appointments(
     status: str = None,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Get all appointments for this dealer, with full buyer info."""
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     dealer_id = str(dealer["_id"])
 
     query: dict = {"dealerId": dealer_id}
@@ -220,7 +220,7 @@ async def get_dealer_appointments(
 async def update_appointment(
     apt_id: str,
     data: dict = Body({}),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Dealer can:
@@ -229,7 +229,7 @@ async def update_appointment(
     Buyer is notified of any change.
     """
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     # Find appointment
     apt = None
