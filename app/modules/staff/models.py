@@ -1,26 +1,47 @@
-﻿from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
 
 class StaffPermission(str, Enum):
-    VIEW_INVENTORY = "view_inventory"
-    ADD_CARS = "add_cars"
-    EDIT_CARS = "edit_cars"
-    DELETE_CARS = "delete_cars"
-    VIEW_SALES = "view_sales"
-    RECORD_SALES = "record_sales"
-    VIEW_STAFF = "view_staff"
-    CREATE_STAFF = "create_staff"
-    EDIT_STAFF = "edit_staff"
-    SUSPEND_STAFF = "suspend_staff"
-    VIEW_PARTNERS = "view_partners"
+    # Inventory
+    VIEW_INVENTORY  = "view_inventory"
+    ADD_CARS        = "add_cars"
+    EDIT_CARS       = "edit_cars"
+    DELETE_CARS     = "delete_cars"
+    # Sales
+    VIEW_SALES      = "view_sales"
+    RECORD_SALES    = "record_sales"
+    # Documents
+    VIEW_INVOICES   = "view_invoices"
+    GENERATE_INVOICES = "generate_invoices"
+    EDIT_DOCUMENTS  = "edit_documents"
+    # Staff management
+    VIEW_STAFF      = "view_staff"
+    CREATE_STAFF    = "create_staff"
+    EDIT_STAFF      = "edit_staff"
+    SUSPEND_STAFF   = "suspend_staff"
+    # Partners
+    VIEW_PARTNERS   = "view_partners"
     MANAGE_PARTNERS = "manage_partners"
-    VIEW_CCTV = "view_cctv"
-    VIEW_MOVEMENTS = "view_movements"
+    # CCTV
+    VIEW_CCTV       = "view_cctv"
+    # Movements
+    VIEW_MOVEMENTS  = "view_movements"
     MANAGE_MOVEMENTS = "manage_movements"
-    VIEW_REPORTS = "view_reports"
+    # Reports
+    VIEW_REPORTS    = "view_reports"
+    GENERATE_REPORTS = "generate_reports"
+    # Appointments
+    VIEW_APPOINTMENTS   = "view_appointments"
+    MANAGE_APPOINTMENTS = "manage_appointments"
+    # Expenses
+    VIEW_EXPENSES   = "view_expenses"
+    MANAGE_EXPENSES = "manage_expenses"
+    # Requests
+    VIEW_REQUESTS   = "view_requests"
+    MANAGE_REQUESTS = "manage_requests"
 
 
 class StaffStatus(str, Enum):

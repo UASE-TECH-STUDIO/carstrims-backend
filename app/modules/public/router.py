@@ -1,6 +1,6 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
-from app.auth.dependencies import get_current_user, get_current_dealer
+from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.utils.qr_service import generate_dealer_qr, get_dealer_qr
 from app.utils.comments_service import add_comment, get_car_comments, delete_comment, add_reply
@@ -321,15 +321,15 @@ async def public_user_profile(user_id: str):
 #  QR CODE 
 
 @router.post("/qr/generate")
-async def generate_qr(current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def generate_qr(current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     frontend_url = settings.FRONTEND_URL
     return await generate_dealer_qr(dealer["_id"], frontend_url)
 
 
 @router.get("/qr/me")
-async def get_my_qr(current_user: dict = Depends(get_current_dealer)):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+async def get_my_qr(current_user: dict = Depends(get_current_dealer_or_staff)):
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_dealer_qr(dealer["_id"])
 
 

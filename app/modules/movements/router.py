@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_dealer, get_current_user
+from app.auth.dependencies import get_current_dealer, get_current_dealer_or_staff, get_current_user
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
@@ -42,7 +42,7 @@ async def log_movement(
     current_user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     car = await db["car_listings"].find_one({
         "carId": data.carId, "dealerId": dealer["_id"]
@@ -97,7 +97,7 @@ async def list_movements(
     current_user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     query = {"dealerId": dealer["_id"]}
     if status:
@@ -118,7 +118,7 @@ async def return_vehicle(
     current_user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     mov = await db["vehicle_movement_logs"].find_one({
         "movementId": movement_id, "dealerId": dealer["_id"]
@@ -156,7 +156,7 @@ async def edit_movement(
     current_user: dict = Depends(get_current_user),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     mov = await db["vehicle_movement_logs"].find_one({
         "movementId": movement_id, "dealerId": dealer["_id"]
@@ -272,7 +272,7 @@ async def approve_movement_request(
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
     try:
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     except Exception:
         from fastapi import HTTPException
         raise HTTPException(403, "Not a dealer account")

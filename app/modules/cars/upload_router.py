@@ -1,7 +1,7 @@
-﻿
+
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Body
 from typing import Optional
-from app.auth.dependencies import get_current_user, get_current_dealer
+from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.utils.cloudinary import upload_image, upload_video, upload_document, delete_file
 from app.database.connection import get_db
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
@@ -12,7 +12,7 @@ import uuid
 router = APIRouter(prefix="/api/v1/upload", tags=["Uploads"])
 
 
-# ── TEMP UPLOAD (no dealer profile required — used during setup) ──────────────
+#  TEMP UPLOAD (no dealer profile required  used during setup) 
 # Used for logo, passport, ID card BEFORE the dealer profile exists.
 # Just uploads to Cloudinary and returns the URL. No DB writes.
 
@@ -22,7 +22,7 @@ async def temp_upload_image(
     folder: str = Form(default="temp"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Upload any image during setup — no dealer profile required."""
+    """Upload any image during setup  no dealer profile required."""
     uid = str(current_user["_id"])
     result = await upload_image(
         file,
@@ -38,7 +38,7 @@ async def temp_upload_document(
     folder: str = Form(default="documents"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Upload any document during setup — no dealer profile required."""
+    """Upload any document during setup  no dealer profile required."""
     uid = str(current_user["_id"])
     result = await upload_document(
         file,
@@ -48,16 +48,16 @@ async def temp_upload_document(
     return {"url": result["url"], "secure_url": result["url"]}
 
 
-# ── CAR IMAGES ────────────────────────────────────────────────
+#  CAR IMAGES 
 
 @router.post("/car/{car_id}/images")
 async def upload_car_images(
     car_id: str,
     files: list[UploadFile] = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     car = await db["car_listings"].find_one({
         "carId": car_id, "dealerId": dealer["_id"],
@@ -93,10 +93,10 @@ async def upload_car_images(
 async def delete_car_image(
     car_id: str,
     data: dict = Body(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     image_url = data.get("image_url", "")
 
     car = await db["car_listings"].find_one({
@@ -115,16 +115,16 @@ async def delete_car_image(
     return {"message": "Image removed", "images": updated_images}
 
 
-# ── CAR VIDEO ─────────────────────────────────────────────────
+#  CAR VIDEO 
 
 @router.post("/car/{car_id}/video")
 async def upload_car_video(
     car_id: str,
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     car = await db["car_listings"].find_one({
         "carId": car_id, "dealerId": dealer["_id"],
@@ -147,15 +147,15 @@ async def upload_car_video(
     return {"message": "Video uploaded", "video": result["url"]}
 
 
-# ── DEALER LOGO (requires approved dealer) ────────────────────
+#  DEALER LOGO (requires approved dealer) 
 
 @router.post("/dealer/logo")
 async def upload_dealer_logo(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     result = await upload_image(
         file,
@@ -174,10 +174,10 @@ async def upload_dealer_logo(
 @router.post("/dealer/banner")
 async def upload_dealer_banner(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     result = await upload_image(
         file,
@@ -193,7 +193,7 @@ async def upload_dealer_banner(
     return {"message": "Banner uploaded", "banner": result["url"]}
 
 
-# ── PROFILE PICTURE ───────────────────────────────────────────
+#  PROFILE PICTURE 
 
 @router.post("/profile/picture")
 async def upload_profile_picture(
@@ -223,12 +223,12 @@ async def upload_profile_picture(
     return {"message": "Profile picture uploaded", "profilePicture": result["url"]}
 
 
-# ── MOVEMENT ID CARD ──────────────────────────────────────────
+#  MOVEMENT ID CARD 
 
 @router.post("/movement/id-card")
 async def upload_id_card(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     result = await upload_document(
         file,
@@ -238,7 +238,7 @@ async def upload_id_card(
     return {"message": "ID card uploaded", "idCardUrl": result["url"]}
 
 
-# ── GENERIC DOCUMENT ──────────────────────────────────────────
+#  GENERIC DOCUMENT 
 
 @router.post("/document")
 async def upload_generic_document(
@@ -282,15 +282,15 @@ async def upload_dealer_logo(
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
 
 
-# ── DEALER SIGNATURE (for invoices/receipts) ──────────────────────────────────
+#  DEALER SIGNATURE (for invoices/receipts) 
 @router.post("/dealer/signature")
 async def upload_dealer_signature(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    """Upload dealer signature — auto-applied to all generated documents."""
+    """Upload dealer signature  auto-applied to all generated documents."""
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     result = await upload_image(
         file,
         folder=f"dealers/{dealer['_id']}/signature",
@@ -303,11 +303,11 @@ async def upload_dealer_signature(
     return {"message": "Signature uploaded", "signature": result["url"], "url": result["url"]}
 
 
-# ── DEALER ADMIN PROFILE PICTURE ──────────────────────────────────────────────
+#  DEALER ADMIN PROFILE PICTURE 
 @router.post("/dealer/profile-picture")
 async def upload_dealer_profile_picture(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Upload the dealer admin's personal profile picture (Settings page)."""
     db = get_db()
