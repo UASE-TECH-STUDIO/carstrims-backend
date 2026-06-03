@@ -1,7 +1,7 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user, get_current_dealer
+from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
@@ -143,7 +143,7 @@ async def partner_dashboard(current_user: dict = Depends(get_current_user)):
                 dealer = await db["dealer_organizations"].find_one(
                     {"_id": ObjectId(c["dealerId"])}
                 )
-                s["dealerName"] = dealer.get("companyName") if dealer else "—"
+                s["dealerName"] = dealer.get("companyName") if dealer else ""
                 s["dealerLogo"] = dealer.get("logo") if dealer else None
             cars.append(s)
 
@@ -212,10 +212,10 @@ async def list_dealer_partners(
     status: Optional[str] = Query(None),
     skip: int = Query(0),
     limit: int = Query(20),
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     query = {"dealerId": dealer["_id"]}
     if status:
         query["status"] = status
@@ -237,9 +237,9 @@ async def list_dealer_partners(
 
 
 @router.get("/{link_id}/detail")
-async def partner_detail(link_id: str, current_user: dict = Depends(get_current_dealer)):
+async def partner_detail(link_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(link_id):
         link = await db["partner_links"].find_one({"_id": ObjectId(link_id)})
@@ -290,9 +290,9 @@ async def partner_detail(link_id: str, current_user: dict = Depends(get_current_
 
 
 @router.post("/{link_id}/approve")
-async def approve_partner(link_id: str, current_user: dict = Depends(get_current_dealer)):
+async def approve_partner(link_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(link_id):
         query = {"_id": ObjectId(link_id), "dealerId": dealer["_id"]}
@@ -325,10 +325,10 @@ async def approve_partner(link_id: str, current_user: dict = Depends(get_current
 async def reject_partner(
     link_id: str,
     data: PartnerActionRequest,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(link_id):
         query = {"_id": ObjectId(link_id), "dealerId": dealer["_id"]}
@@ -361,10 +361,10 @@ async def reject_partner(
 async def assign_car(
     link_id: str,
     data: AssignCarRequest,
-    current_user: dict = Depends(get_current_dealer),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(link_id):
         query = {"_id": ObjectId(link_id), "dealerId": dealer["_id"]}
@@ -386,9 +386,9 @@ async def assign_car(
 
 
 @router.delete("/{link_id}")
-async def remove_partner(link_id: str, current_user: dict = Depends(get_current_dealer)):
+async def remove_partner(link_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
     if ObjectId.is_valid(link_id):
         query = {"_id": ObjectId(link_id), "dealerId": dealer["_id"]}
