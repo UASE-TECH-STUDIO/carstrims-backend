@@ -1,4 +1,4 @@
-﻿"""
+"""
 CARSTRIMS Notification Service
 Handles: Email (Resend), WhatsApp (Twilio Sandbox), SMS (Twilio)
 """
@@ -9,19 +9,19 @@ from typing import Optional
 
 import os
 
-# ── Resend Email Config ────────────────────────────────────────
+#  Resend Email Config 
 # No keys here! They stay in the .env file.
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM    = os.getenv("RESEND_FROM", "CARSTRIMS <onboarding@resend.dev>")
 
-# ── Twilio WhatsApp Config ─────────────────────────────────────
+#  Twilio WhatsApp Config 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_WA_FROM     = os.getenv("TWILIO_WA_FROM", "whatsapp:+14155238886")
 TWILIO_WA_JOIN     = os.getenv("TWILIO_WA_JOIN", "join ants-whistle")
 
 
-# ── EMAIL via Resend ──────────────────────────────────────────
+#  EMAIL via Resend 
 async def send_email(to: str, subject: str, html: str) -> bool:
     """Send email via Resend API."""
     if not to or "@" not in to:
@@ -47,7 +47,7 @@ async def send_email(to: str, subject: str, html: str) -> bool:
         return False
 
 
-# ── WHATSAPP via Twilio Sandbox ───────────────────────────────
+#  WHATSAPP via Twilio Sandbox 
 async def send_whatsapp(to_phone: str, message: str) -> bool:
     """
     Send WhatsApp message via Twilio Sandbox.
@@ -75,7 +75,7 @@ async def send_whatsapp(to_phone: str, message: str) -> bool:
         return False
 
 
-# ── SMS via Twilio ────────────────────────────────────────────
+#  SMS via Twilio 
 async def send_sms(to_phone: str, message: str) -> bool:
     """Send SMS via Twilio. Requires a paid Twilio number."""
     twilio_sms_from = os.getenv("TWILIO_SMS_FROM", "")
@@ -94,7 +94,7 @@ async def send_sms(to_phone: str, message: str) -> bool:
         return False
 
 
-# ── EMAIL TEMPLATES ───────────────────────────────────────────
+#  EMAIL TEMPLATES 
 def email_base(title: str, body: str, footer: str = "") -> str:
     """Base HTML email template."""
     return f"""
@@ -111,7 +111,7 @@ def email_base(title: str, body: str, footer: str = "") -> str:
       {body}
     </div>
     <div style="background:#F5F5F5;padding:1rem 2rem;font-size:0.75rem;color:#888;text-align:center">
-      {footer or "CARSTRIMS · Built by UASE TECH STUDIO · Nigeria's Premier Vehicle Marketplace"}
+      {footer or "CARSTRIMS  Built by UASE TECH STUDIO  Nigeria's Premier Vehicle Marketplace"}
     </div>
   </div>
 </body>
@@ -119,7 +119,7 @@ def email_base(title: str, body: str, footer: str = "") -> str:
 """
 
 
-# ── PRE-BUILT NOTIFICATION FUNCTIONS ─────────────────────────
+#  PRE-BUILT NOTIFICATION FUNCTIONS 
 
 async def notify_registration(user: dict):
     """Send welcome notification after registration."""
@@ -136,10 +136,10 @@ async def notify_registration(user: dict):
 
     # Email
     html = email_base(
-        f"Welcome to CARSTRIMS, {name}! 🎉",
+        f"Welcome to CARSTRIMS, {name}! ",
         f"""
         <p style="color:#525252;line-height:1.6">
-          Thank you for joining CARSTRIMS — Nigeria's premier vehicle marketplace.
+          Thank you for joining CARSTRIMS  Nigeria's premier vehicle marketplace.
           We have successfully created <strong>{role_msg}</strong>.
         </p>
         <div style="background:#FFF7ED;border-left:4px solid #F47B20;padding:1rem;margin:1.5rem 0;border-radius:0 8px 8px 0">
@@ -147,9 +147,9 @@ async def notify_registration(user: dict):
             {"After completing your dealership setup, your account will be reviewed and approved within 24 hours." if role == "DEALER_ADMIN" else "You can now browse vehicles, save favourites, and message dealers directly."}
           </p>
         </div>
-        <a href="https://carstrims-app.vercel.app/login"
+        <a href="https://www.carstrims.com/login"
           style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold;margin-top:0.5rem">
-          Go to Dashboard →
+          Go to Dashboard 
         </a>
         """,
     )
@@ -157,10 +157,10 @@ async def notify_registration(user: dict):
 
     # WhatsApp
     wa_msg = (
-        f"👋 Welcome to CARSTRIMS, {name}!\n\n"
+        f" Welcome to CARSTRIMS, {name}!\n\n"
         f"Your {role_msg} has been created successfully.\n\n"
-        f"{'Complete your dealership setup at: https://carstrims-app.vercel.app/dashboard/dealer/setup' if role == 'DEALER_ADMIN' else 'Start browsing vehicles at: https://carstrims-app.vercel.app/feed'}\n\n"
-        f"_CARSTRIMS — Built by UASE TECH STUDIO_"
+        f"{'Complete your dealership setup at: https://www.carstrims.com/dashboard/dealer/setup' if role == 'DEALER_ADMIN' else 'Start browsing vehicles at: https://www.carstrims.com/feed'}\n\n"
+        f"_CARSTRIMS  Built by UASE TECH STUDIO_"
     )
     await send_whatsapp(phone, wa_msg)
 
@@ -173,30 +173,30 @@ async def notify_dealer_approved(dealer: dict, user: dict):
     company = dealer.get("companyName", "Your dealership")
 
     html = email_base(
-        "Your Dealership Has Been Approved ✅",
+        "Your Dealership Has Been Approved ",
         f"""
         <p style="color:#525252;line-height:1.6">
           Great news, {name}! <strong>{company}</strong> has been approved on CARSTRIMS.
           Your listings are now visible to all buyers on the platform.
         </p>
         <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:1rem;margin:1.5rem 0;border-radius:0 8px 8px 0">
-          <p style="margin:0;color:#15803D">✅ Account Status: <strong>Approved & Active</strong></p>
+          <p style="margin:0;color:#15803D"> Account Status: <strong>Approved & Active</strong></p>
         </div>
-        <a href="https://carstrims-app.vercel.app/dashboard/dealer"
+        <a href="https://www.carstrims.com/dashboard/dealer"
           style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">
-          Go to Your Dashboard →
+          Go to Your Dashboard 
         </a>
         """,
     )
-    await send_email(email, f"🎉 {company} is Approved on CARSTRIMS!", html)
+    await send_email(email, f" {company} is Approved on CARSTRIMS!", html)
 
     wa_msg = (
-        f"✅ *CARSTRIMS Approval Notice*\n\n"
+        f" *CARSTRIMS Approval Notice*\n\n"
         f"Hello {name}!\n\n"
         f"*{company}* has been approved on CARSTRIMS.\n\n"
         f"Your vehicle listings are now live on the platform.\n\n"
-        f"👉 Dashboard: https://carstrims-app.vercel.app/dashboard/dealer\n\n"
-        f"_CARSTRIMS — Built by UASE TECH STUDIO_"
+        f" Dashboard: https://www.carstrims.com/dashboard/dealer\n\n"
+        f"_CARSTRIMS  Built by UASE TECH STUDIO_"
     )
     await send_whatsapp(phone, wa_msg)
 
@@ -209,7 +209,7 @@ async def notify_dealer_rejected(dealer: dict, user: dict, reason: str = ""):
     company = dealer.get("companyName", "Your dealership")
 
     html = email_base(
-        "Application Update — CARSTRIMS",
+        "Application Update  CARSTRIMS",
         f"""
         <p style="color:#525252;line-height:1.6">
           Hello {name}, we have reviewed your application for <strong>{company}</strong>.
@@ -224,14 +224,14 @@ async def notify_dealer_rejected(dealer: dict, user: dict, reason: str = ""):
         </p>
         """,
     )
-    await send_email(email, "CARSTRIMS — Application Update", html)
+    await send_email(email, "CARSTRIMS  Application Update", html)
 
     wa_msg = (
-        f"⚠️ *CARSTRIMS Application Update*\n\n"
+        f" *CARSTRIMS Application Update*\n\n"
         f"Hello {name}, your application for *{company}* was not approved.\n\n"
         f"{f'Reason: {reason}' if reason else ''}\n\n"
         f"Contact support@carstrims.com for assistance.\n\n"
-        f"_CARSTRIMS — Built by UASE TECH STUDIO_"
+        f"_CARSTRIMS  Built by UASE TECH STUDIO_"
     )
     await send_whatsapp(phone, wa_msg)
 
@@ -250,22 +250,22 @@ async def notify_password_reset(user: dict, new_password: str, method: str = "no
           <p style="margin:0;font-size:0.8rem;color:#888;text-transform:uppercase;letter-spacing:0.1em">New Temporary Password</p>
           <p style="margin:0.5rem 0 0;font-size:1.5rem;font-family:monospace;color:#1A1A1A;font-weight:bold">{new_password}</p>
         </div>
-        <p style="color:#DC2626;font-size:0.875rem">⚠️ Please log in and change this password immediately from your Settings page.</p>
-        <a href="https://carstrims-app.vercel.app/login"
+        <p style="color:#DC2626;font-size:0.875rem"> Please log in and change this password immediately from your Settings page.</p>
+        <a href="https://www.carstrims.com/login"
           style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">
-          Login Now →
+          Login Now 
         </a>
         """,
     )
-    await send_email(email, "CARSTRIMS — Password Reset", html)
+    await send_email(email, "CARSTRIMS  Password Reset", html)
 
     wa_msg = (
-        f"🔑 *CARSTRIMS Password Reset*\n\n"
+        f" *CARSTRIMS Password Reset*\n\n"
         f"Hello {name}!\n\n"
         f"Your temporary password is:\n*{new_password}*\n\n"
-        f"⚠️ Please login and change it immediately from Settings.\n\n"
-        f"👉 https://carstrims-app.vercel.app/login\n\n"
-        f"_CARSTRIMS — Built by UASE TECH STUDIO_"
+        f" Please login and change it immediately from Settings.\n\n"
+        f" https://www.carstrims.com/login\n\n"
+        f"_CARSTRIMS  Built by UASE TECH STUDIO_"
     )
     await send_whatsapp(phone, wa_msg)
 
@@ -296,11 +296,11 @@ async def notify_new_message(receiver: dict, sender_name: str, message_preview: 
     name  = receiver.get("fullName", "User")
 
     wa_msg = (
-        f"💬 *New message on CARSTRIMS*\n\n"
+        f" *New message on CARSTRIMS*\n\n"
         f"Hello {name}!\n"
         f"*{sender_name}* sent you a message:\n"
         f"_{message_preview[:80]}{'...' if len(message_preview) > 80 else ''}_\n\n"
-        f"👉 Reply at: https://carstrims-app.vercel.app/dashboard\n\n"
+        f" Reply at: https://www.carstrims.com/dashboard\n\n"
         f"_CARSTRIMS_"
     )
     await send_whatsapp(phone, wa_msg)
@@ -309,7 +309,7 @@ async def notify_new_message(receiver: dict, sender_name: str, message_preview: 
 async def notify_new_car_posted(followers: list, dealer_name: str, car: dict, car_url: str):
     """Notify dealer followers when a new vehicle is posted."""
     car_title = f"{car.get('brand','')} {car.get('model','')} {car.get('year','')}"
-    price     = f"₦{car.get('sellingPrice',0):,}"
+    price     = f"{car.get('sellingPrice',0):,}"
 
     for follower in followers:
         email = follower.get("email", "")
@@ -324,20 +324,20 @@ async def notify_new_car_posted(followers: list, dealer_name: str, car: dict, ca
                 <div style="background:#F5F5F5;border-radius:8px;padding:1.25rem;margin:1rem 0">
                   <h3 style="margin:0;color:#1A1A1A">{car_title}</h3>
                   <p style="color:#F47B20;font-size:1.25rem;font-weight:bold;margin:0.5rem 0">{price}</p>
-                  <p style="color:#737373;font-size:0.85rem;margin:0">{car.get('color','')} · {car.get('transmission','')} · {car.get('condition','')}</p>
+                  <p style="color:#737373;font-size:0.85rem;margin:0">{car.get('color','')}  {car.get('transmission','')}  {car.get('condition','')}</p>
                 </div>
-                <a href="{car_url}" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">View Vehicle →</a>
+                <a href="{car_url}" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">View Vehicle </a>
                 """,
             )
-            await send_email(email, f"New Vehicle from {dealer_name} — CARSTRIMS", html)
+            await send_email(email, f"New Vehicle from {dealer_name}  CARSTRIMS", html)
 
         if phone:
             await send_whatsapp(phone, (
-                f"🚗 *New Vehicle Alert — CARSTRIMS*\n\n"
+                f" *New Vehicle Alert  CARSTRIMS*\n\n"
                 f"Hello {name}!\n\n"
                 f"*{dealer_name}* just listed:\n"
                 f"*{car_title}*\n"
                 f"Price: *{price}*\n\n"
-                f"👉 View it: {car_url}\n\n"
+                f" View it: {car_url}\n\n"
                 f"_CARSTRIMS_"
             ))

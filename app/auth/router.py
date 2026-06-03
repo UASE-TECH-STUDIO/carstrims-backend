@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from app.auth.dependencies import get_current_user
@@ -283,7 +283,7 @@ async def forgot_password_send(data: ForgotPasswordSend):
                   <p style="margin:0.5rem 0 0;font-size:1.5rem;font-family:monospace;font-weight:bold">{temp_password}</p>
                 </div>
                 <p style="color:#DC2626;font-size:0.875rem"> Change this immediately after login.</p>
-                <a href="https://carstrims-app.vercel.app/login" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">Login Now </a>
+                <a href="https://www.carstrims.com/login" style="display:inline-block;background:#F47B20;color:#fff;text-decoration:none;padding:0.875rem 2rem;border-radius:8px;font-weight:bold">Login Now </a>
                 """,
             )
             import asyncio
@@ -295,7 +295,7 @@ async def forgot_password_send(data: ForgotPasswordSend):
                 f" *CARSTRIMS Password Reset*\n\n"
                 f"Your temporary password: *{temp_password}*\n\n"
                 f" Please login and change it.\n\n"
-                f" https://carstrims-app.vercel.app/login"
+                f" https://www.carstrims.com/login"
             ))
     except Exception:
         pass
