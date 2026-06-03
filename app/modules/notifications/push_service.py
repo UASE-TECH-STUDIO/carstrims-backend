@@ -1,4 +1,4 @@
-﻿"""
+"""
 Web Push Notification Service using pywebpush.
 Generate VAPID keys once:
     pip install py-vapid

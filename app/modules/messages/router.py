@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -171,6 +171,19 @@ async def start_conversation(
             "data": {"conversationId": conv_id},
             "createdAt": now,
         })
+
+        # Fire push notification to receiver
+        try:
+            import asyncio
+            from app.modules.notifications.push_service import send_web_push_to_user
+            asyncio.create_task(send_web_push_to_user(
+                receiver_mongo_id,
+                f"New message from {current_user.get('fullName', 'Someone')}",
+                data.message[:80],
+                "/dashboard",
+            ))
+        except Exception as _push_err:
+            print(f"[Push] Message push failed: {_push_err}")
 
     return {"conversationId": conv_id, "message": "Conversation started"}
 
