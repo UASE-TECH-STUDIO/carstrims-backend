@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Body, UploadFile, File
+﻿from fastapi import APIRouter, Depends, Query, Body, UploadFile, File
 from typing import Optional, List
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -27,34 +27,33 @@ class BroadcastRequest(BaseModel):
     title: str
     message: str
     targetRole: str = "all"
-    targetUserIds: Optional[List[str]] = None   # specific users
+    targetUserIds: Optional[List[str]] = None
     documentUrl: Optional[str] = None
     documentName: Optional[str] = None
-    documentType: Optional[str] = None           # "image" | "video" | "document"
-    sendEmail: bool = False                       # also send email to recipients
+    documentType: Optional[str] = None
+    sendEmail: bool = False
 
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
 
 
-#  STATS (corrected role counts) 
+#  STATS
 @router.get("/stats")
 async def get_stats(admin=Depends(require_admin)):
     db = get_db()
-    total_dealers    = await db["dealer_organizations"].count_documents({})
-    active_dealers   = await db["dealer_organizations"].count_documents({"status": "approved"})
-    pending_dealers  = await db["dealer_organizations"].count_documents({"status": "awaiting_approval"})
-    suspended_dealers= await db["dealer_organizations"].count_documents({"status": "suspended"})
+    total_dealers     = await db["dealer_organizations"].count_documents({})
+    active_dealers    = await db["dealer_organizations"].count_documents({"status": "approved"})
+    pending_dealers   = await db["dealer_organizations"].count_documents({"status": "awaiting_approval"})
+    suspended_dealers = await db["dealer_organizations"].count_documents({"status": "suspended"})
 
-    # Correct role-based user counts
-    total_users      = await db["users"].count_documents({})
-    buyers_only      = await db["users"].count_documents({"role": "PUBLIC_USER"})
-    partners_only    = await db["users"].count_documents({"role": "PARTNER_USER"})
-    staff_only       = await db["users"].count_documents({"role": "DEALER_STAFF"})
-    dealer_admins    = await db["users"].count_documents({"role": "DEALER_ADMIN"})
+    total_users    = await db["users"].count_documents({})
+    buyers_only    = await db["users"].count_documents({"role": "PUBLIC_USER"})
+    partners_only  = await db["users"].count_documents({"role": "PARTNER_USER"})
+    staff_only     = await db["users"].count_documents({"role": "DEALER_STAFF"})
+    dealer_admins  = await db["users"].count_documents({"role": "DEALER_ADMIN"})
 
-    total_cars  = await db["car_listings"].count_documents({})
-    total_sold  = await db["car_listings"].count_documents({"status": "sold"})
+    total_cars = await db["car_listings"].count_documents({})
+    total_sold = await db["car_listings"].count_documents({"status": "sold"})
 
     rev = await db["sale_transactions"].aggregate([
         {"$group": {"_id": None, "total": {"$sum": "$sellingPrice"}, "count": {"$sum": 1}}}
@@ -91,7 +90,7 @@ async def get_stats(admin=Depends(require_admin)):
     }
 
 
-#  DEALERS 
+#  DEALERS
 @router.get("/dealers")
 async def list_dealers(
     status: Optional[str] = Query(None),
@@ -101,7 +100,8 @@ async def list_dealers(
 ):
     db = get_db()
     query = {}
-    if status and status != "all": query["status"] = status
+    if status and status != "all":
+        query["status"] = status
     if search:
         query["$or"] = [
             {"companyName": {"$regex": search, "$options": "i"}},
@@ -115,20 +115,18 @@ async def list_dealers(
     for d in dealers:
         s = serialize_doc(d)
         s["staffCount"] = await db["staff_accounts"].count_documents({"dealerId": str(d["_id"])})
-        s["carCount"] = await db["car_listings"].count_documents({"dealerId": str(d["_id"])})
-        s["soldCount"] = await db["car_listings"].count_documents({"dealerId": str(d["_id"]), "status": "sold"})
-        # Enrich with user doc fields that may be stored there
+        s["carCount"]   = await db["car_listings"].count_documents({"dealerId": str(d["_id"])})
+        s["soldCount"]  = await db["car_listings"].count_documents({"dealerId": str(d["_id"]), "status": "sold"})
         if d.get("userId"):
             user_doc = await db["users"].find_one({"_id": ObjectId(d["userId"])}) if ObjectId.is_valid(str(d["userId"])) else None
             if not user_doc:
                 user_doc = await db["users"].find_one({"userId": str(d["userId"])})
             if user_doc:
-                # Pull document fields from user doc if not already on dealer doc
                 for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness", "profilePicture", "avatar"]:
                     if not s.get(field) and user_doc.get(field):
                         s[field] = user_doc[field]
-                s["ownerEmail"] = user_doc.get("email")
-                s["ownerPhone"] = user_doc.get("phone")
+                s["ownerEmail"]  = user_doc.get("email")
+                s["ownerPhone"]  = user_doc.get("phone")
                 s["ownerStatus"] = user_doc.get("status")
         enriched.append(s)
     return {"total": total, "dealers": enriched}
@@ -136,9 +134,7 @@ async def list_dealers(
 
 @router.get("/dealers/{dealer_id}/setup")
 async def get_dealer_setup(dealer_id: str, admin=Depends(require_admin)):
-    """Fetch a single dealer with full enriched data for admin detail page."""
     db = get_db()
-
     dealer = None
     if ObjectId.is_valid(dealer_id):
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
@@ -153,7 +149,6 @@ async def get_dealer_setup(dealer_id: str, admin=Depends(require_admin)):
     result["carCount"]   = await db["car_listings"].count_documents({"dealerId": str(dealer["_id"])})
     result["soldCount"]  = await db["car_listings"].count_documents({"dealerId": str(dealer["_id"]), "status": "sold"})
 
-    # Enrich with owner user data
     owner = None
     if dealer.get("userId"):
         uid = str(dealer["userId"])
@@ -169,15 +164,12 @@ async def get_dealer_setup(dealer_id: str, admin=Depends(require_admin)):
             "status": owner.get("status"),
             "_id": str(owner["_id"]),
         }
-        # Merge document fields from user if not on dealer doc
         for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness"]:
             if not result.get(field) and owner.get(field):
                 result[field] = owner[field]
 
-    # Recent vehicles
     cars = await db["car_listings"].find({"dealerId": str(dealer["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
     result["recentCars"] = [serialize_doc(c) for c in cars]
-
     return result
 
 
@@ -189,21 +181,29 @@ async def approve_dealer(dealer_id: str, admin=Depends(require_admin)):
     if not dealer:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Dealer not found")
+
     await db["dealer_organizations"].update_one(q, {"$set": {"status": "approved", "approvedAt": datetime.utcnow()}})
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "active"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Dealership Approved ",
+        "title": "Dealership Approved",
         "message": "Your dealership has been approved. You now have full access to your dashboard.",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Dealership Approved ", "Your dealership has been approved. You now have full access to your dashboard.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            dealer["userId"],
+            "Dealership Approved",
+            "Your dealership has been approved. You now have full access to your dashboard.",
+            "/dashboard",
+        ))
+    except Exception:
+        pass
+
     # Send real email + WhatsApp notification
     try:
         user_obj = await db["users"].find_one({"_id": ObjectId(dealer["userId"])})
@@ -213,6 +213,7 @@ except Exception as _pe:
             asyncio.create_task(notify_dealer_approved(dealer, user_obj))
     except Exception:
         pass
+
     return {"message": "Dealer approved"}
 
 
@@ -224,6 +225,7 @@ async def reject_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(req
     if not dealer:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Dealer not found")
+
     reason = data.get("reason", "Your application did not meet our requirements.")
     await db["dealer_organizations"].update_one(q, {"$set": {"status": "rejected", "warningNote": reason}})
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "rejected"}})
@@ -232,13 +234,15 @@ async def reject_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(req
         "title": "Application Rejected", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Application Rejected", reason, "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(dealer["userId"], "Application Rejected", reason, "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "Dealer rejected"}
 
 
@@ -250,21 +254,24 @@ async def suspend_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(re
     if not dealer:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Dealer not found")
+
     note = data.get("note", "Your account has been suspended.")
     await db["dealer_organizations"].update_one(q, {"$set": {"status": "suspended", "warningNote": note, "updatedAt": datetime.utcnow()}})
     await db["users"].update_one({"_id": ObjectId(dealer["userId"])}, {"$set": {"status": "suspended"}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Suspended ", "message": note,
+        "title": "Account Suspended", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Account Suspended ", note, "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(dealer["userId"], "Account Suspended", note, "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "Dealer suspended"}
 
 
@@ -276,20 +283,23 @@ async def warn_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(requi
     if not dealer:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Dealer not found")
+
     note = data.get("note", "Please review your account activity.")
     await db["dealer_organizations"].update_one(q, {"$set": {"warningNote": note, "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"], "type": "general",
-        "title": "Account Warning ", "message": note,
+        "title": "Account Warning", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Account Warning ", note, "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(dealer["userId"], "Account Warning", note, "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "Warning sent"}
 
 
@@ -316,7 +326,7 @@ async def reset_dealer_password(user_id: str, data: dict = Body({}), admin=Depen
     return {"message": "Password reset", "newPassword": new_password}
 
 
-#  USERS 
+#  USERS
 @router.get("/users")
 async def list_users(
     role: Optional[str] = Query(None),
@@ -326,7 +336,8 @@ async def list_users(
 ):
     db = get_db()
     query: dict = {}
-    if role and role != "all": query["role"] = role
+    if role and role != "all":
+        query["role"] = role
     if search:
         query["$or"] = [
             {"fullName": {"$regex": search, "$options": "i"}},
@@ -343,12 +354,9 @@ async def list_users(
     return {"total": total, "users": clean}
 
 
-
 @router.get("/users/{user_id}/profile")
 async def get_user_full_profile(user_id: str, admin=Depends(require_admin)):
-    """Full user profile for super-admin - includes dealer docs, cars, appointments."""
     db = get_db()
-    # Find user
     user = None
     if ObjectId.is_valid(user_id):
         user = await db["users"].find_one({"_id": ObjectId(user_id)})
@@ -361,7 +369,6 @@ async def get_user_full_profile(user_id: str, admin=Depends(require_admin)):
     s = serialize_doc(user)
     s.pop("passwordHash", None)
 
-    # Attach dealer profile if DEALER_ADMIN
     dealer = None
     if user.get("role") in ("DEALER_ADMIN", "DEALER_STAFF"):
         if user.get("role") == "DEALER_ADMIN":
@@ -369,23 +376,19 @@ async def get_user_full_profile(user_id: str, admin=Depends(require_admin)):
         else:
             staff = await db["staff_accounts"].find_one({"userId": str(user["_id"])})
             if staff:
-                dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(staff["dealerId"])}) if ObjectId.is_valid(str(staff.get("dealerId",""))) else None
+                dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(staff["dealerId"])}) if ObjectId.is_valid(str(staff.get("dealerId", ""))) else None
         if dealer:
             ds = serialize_doc(dealer)
-            # Merge document fields from user into dealer if missing
             for field in ["passportPhoto", "idCardUrl", "cacUrl", "isRegisteredBusiness"]:
                 if not ds.get(field) and s.get(field):
                     ds[field] = s[field]
             s["dealer"] = ds
-            # Recent cars
             cars = await db["car_listings"].find({"dealerId": str(dealer["_id"])}).sort("createdAt", -1).limit(20).to_list(20)
             s["recentCars"] = [serialize_doc(c) for c in cars]
 
-    # Appointments
     appts = await db["appointments"].find({"userId": str(user["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
     s["appointments"] = [serialize_doc(a) for a in appts]
 
-    # Vehicle requests
     requests = await db["special_requests"].find({"userId": str(user["_id"])}).sort("createdAt", -1).limit(10).to_list(10)
     s["vehicleRequests"] = [serialize_doc(r) for r in requests]
 
@@ -394,7 +397,6 @@ async def get_user_full_profile(user_id: str, admin=Depends(require_admin)):
 
 @router.patch("/users/{user_id}/profile")
 async def update_user_profile_admin(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
-    """Admin can update any user profile field."""
     db = get_db()
     data.pop("_id", None)
     data.pop("passwordHash", None)
@@ -402,7 +404,6 @@ async def update_user_profile_admin(user_id: str, data: dict = Body({}), admin=D
     q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
     await db["users"].update_one(q, {"$set": data})
     return {"message": "Profile updated"}
-
 
 
 @router.post("/users/{user_id}/upload-doc")
@@ -413,11 +414,7 @@ async def admin_upload_user_doc(
     file: UploadFile = File(...),
     admin=Depends(require_admin),
 ):
-    """Admin can upload/replace any document for a user."""
-    import cloudinary.uploader
-    import os
     db = get_db()
-
     contents = await file.read()
     result = cloudinary.uploader.upload(
         contents,
@@ -429,11 +426,9 @@ async def admin_upload_user_doc(
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail="Upload failed")
 
-    # Save to user doc
     q = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"userId": user_id}
     await db["users"].update_one(q, {"$set": {field: url, "updatedAt": datetime.utcnow()}})
 
-    # If it's a dealer document, also save to dealer_organizations
     if field in ("passportPhoto", "logo", "idCardUrl", "cacUrl"):
         user = await db["users"].find_one(q)
         if user:
@@ -446,9 +441,9 @@ async def admin_upload_user_doc(
 
     return {"url": url, "field": field}
 
+
 @router.post("/users/{user_id}/restrict-profile-field")
 async def restrict_profile_field(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
-    """Flag a specific profile field as restricted."""
     db = get_db()
     field = data.get("field")
     reason = data.get("reason", "")
@@ -464,16 +459,18 @@ async def suspend_user(user_id: str, data: dict = Body({}), admin=Depends(requir
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "suspended", "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Suspended ", "message": reason,
+        "title": "Account Suspended", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(user_id, "Account Suspended ", reason, "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(user_id, "Account Suspended", reason, "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "User suspended"}
 
 
@@ -483,17 +480,19 @@ async def unsuspend_user(user_id: str, admin=Depends(require_admin)):
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "active", "updatedAt": datetime.utcnow()}})
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Reactivated ",
+        "title": "Account Reactivated",
         "message": "Your account has been reactivated. Welcome back!",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(user_id, "Account Reactivated ", "Your account has been reactivated. Welcome back!", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(user_id, "Account Reactivated", "Your account has been reactivated. Welcome back!", "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "User unsuspended"}
 
 
@@ -503,16 +502,18 @@ async def warn_user(user_id: str, data: dict = Body({}), admin=Depends(require_a
     reason = data.get("reason", "Please review your account activity.")
     await db["notifications"].insert_one({
         "receiverId": user_id, "type": "general",
-        "title": "Account Warning ", "message": reason,
+        "title": "Account Warning", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(user_id, "Account Warning ", reason, "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(user_id, "Account Warning", reason, "/dashboard"))
+    except Exception:
+        pass
+
     return {"message": "Warning sent"}
 
 
@@ -535,7 +536,6 @@ async def reset_user_password(user_id: str, data: dict = Body({}), admin=Depends
         raise HTTPException(404, "User not found")
     await db["users"].update_one(q, {"$set": {"passwordHash": hash_password(new_password), "updatedAt": datetime.utcnow()}})
 
-    # Notify user via email + in-app notification
     try:
         from app.services.notifications import notify_password_reset
         import asyncio
@@ -554,7 +554,7 @@ async def reset_user_password(user_id: str, data: dict = Body({}), admin=Depends
     return {"message": "Password reset and user notified", "newPassword": new_password}
 
 
-#  CAR MODERATION 
+#  CAR MODERATION
 @router.delete("/cars/{car_id}")
 async def admin_delete_car(car_id: str, admin=Depends(require_admin)):
     db = get_db()
@@ -598,7 +598,7 @@ async def admin_delete_comment(car_id: str, comment_id: str, admin=Depends(requi
     return {"message": "Comment deleted"}
 
 
-#  BROADCAST (with specific user targeting + video) 
+#  BROADCAST
 @router.post("/broadcast")
 async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     db = get_db()
@@ -608,7 +608,6 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     system_user = await db["users"].find_one({"role": "SYSTEM_ADMIN"})
     system_id = str(system_user["_id"]) if system_user else admin_id
 
-    # Resolve recipients
     if data.targetUserIds and len(data.targetUserIds) > 0:
         user_ids = data.targetUserIds
     else:
@@ -621,7 +620,6 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     if not user_ids:
         return {"message": "No recipients found", "sentTo": 0}
 
-    # Send announcement message to each recipient
     msg_docs = []
     conv_docs = []
     notif_docs = []
@@ -638,7 +636,7 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
             "message": data.message,
             "attachmentUrl": data.documentUrl,
             "attachmentName": data.documentName,
-            "attachmentType": data.documentType,  # "image"|"video"|"document"
+            "attachmentType": data.documentType,
             "broadcastId": broadcast_id,
             "isRead": False,
             "createdAt": now,
@@ -671,7 +669,6 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
     if notif_docs:
         await db["notifications"].insert_many(notif_docs)
 
-    # Send email to all recipients who have emails
     try:
         from app.services.notifications import send_broadcast_email
         import asyncio
@@ -681,10 +678,7 @@ async def send_broadcast(data: BroadcastRequest, admin=Depends(require_admin)):
                 {"email": 1, "fullName": 1}
             ).to_list(10000)
             asyncio.create_task(send_broadcast_email(
-                recipient_users,
-                data.title,
-                data.message,
-                data.title,
+                recipient_users, data.title, data.message, data.title,
             ))
     except Exception:
         pass
@@ -716,7 +710,7 @@ async def get_broadcasts(skip: int = Query(0), limit: int = Query(20), admin=Dep
     return {"total": total, "broadcasts": [serialize_doc(d) for d in docs]}
 
 
-#  UPLOAD (image, video, document) 
+#  UPLOAD
 @router.post("/upload/document")
 async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depends(require_admin)):
     try:
@@ -741,7 +735,7 @@ async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depend
             "url": result["secure_url"],
             "name": file.filename,
             "size": len(content),
-            "type": doc_type,         # "image" | "video" | "document"
+            "type": doc_type,
             "isImage": doc_type == "image",
             "isVideo": doc_type == "video",
         }
@@ -750,7 +744,7 @@ async def upload_broadcast_attachment(file: UploadFile = File(...), admin=Depend
         raise HTTPException(status_code=400, detail=f"Upload failed: {str(e)}")
 
 
-#  ANALYTICS 
+#  ANALYTICS
 @router.get("/growth")
 async def analytics_growth(admin=Depends(require_admin)):
     db = get_db()
@@ -760,7 +754,8 @@ async def analytics_growth(admin=Depends(require_admin)):
         month_offset = now.month - i
         year = now.year
         while month_offset <= 0:
-            month_offset += 12; year -= 1
+            month_offset += 12
+            year -= 1
         start = datetime(year, month_offset, 1)
         end = datetime(year + 1, 1, 1) if month_offset == 12 else datetime(year, month_offset + 1, 1)
         label = start.strftime("%b")
@@ -784,7 +779,9 @@ async def top_dealers(limit: int = Query(10), admin=Depends(require_admin)):
     dealers = await db["dealer_organizations"].find({"status": "approved"}).sort("totalCarsSold", -1).limit(limit).to_list(limit)
     result = []
     for i, d in enumerate(dealers):
-        s = serialize_doc(d); s["rank"] = i + 1; result.append(s)
+        s = serialize_doc(d)
+        s["rank"] = i + 1
+        result.append(s)
     return result
 
 
@@ -795,7 +792,7 @@ async def activity_log(skip: int = Query(0), limit: int = Query(50), admin=Depen
     return {"activities": [serialize_doc(d) for d in docs]}
 
 
-#  CREATE DEALER 
+#  CREATE DEALER
 @router.post("/create-dealer")
 async def create_dealer_account(data: dict = Body(...), admin=Depends(require_admin)):
     from app.auth.password import hash_password
@@ -807,7 +804,8 @@ async def create_dealer_account(data: dict = Body(...), admin=Depends(require_ad
         raise HTTPException(status_code=400, detail="Email already registered")
     password = data.get("password", "Dealer@" + "".join(random.choices(string.digits, k=6)))
     user_doc = {
-        "fullName": data.get("fullName"), "username": data.get("username", email.split("@")[0]),
+        "fullName": data.get("fullName"),
+        "username": data.get("username", email.split("@")[0]),
         "email": email, "phone": data.get("phone", ""), "role": "DEALER_ADMIN",
         "passwordHash": hash_password(password), "status": "active",
         "dealerId": None, "isEmailVerified": True,
