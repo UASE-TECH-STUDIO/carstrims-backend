@@ -240,13 +240,20 @@ async def respond_to_request(request_id: str, dealer_id: str, response: str, pro
         "title": "Dealer Responded to Your Request",
         "message": response[:100], "isRead": False, "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(req["userId"], "Dealer Responded to Your Request", response[:100], "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            req["userId"],
+            "Dealer Responded to Your Request",
+            response[:100],
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
+
     return {"message": "Response sent"}
 
 
@@ -330,4 +337,3 @@ async def get_all_users_admin(search: str = None, role: str = None, skip: int = 
         s.pop("passwordHash", None)
         clean.append(s)
     return {"total": total, "users": clean, "skip": skip, "limit": limit}
-
