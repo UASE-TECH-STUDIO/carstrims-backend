@@ -193,13 +193,19 @@ async def approve_dealer(dealer_id: str, admin_id: str) -> dict:
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Account Approved", "Congratulations! Your dealer account has been approved. You now have full access.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            dealer["userId"],
+            "Account Approved",
+            "Congratulations! Your dealer account has been approved. You now have full access.",
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
 
     return {"message": "Dealer approved successfully", "dealerId": dealer["dealerId"]}
 
@@ -229,13 +235,19 @@ async def reject_dealer(dealer_id: str, admin_id: str, reason: str = None) -> di
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Account Registration Rejected", reason or "Your dealer registration was not approved. Please contact support.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            dealer["userId"],
+            "Account Registration Rejected",
+            reason or "Your dealer registration was not approved. Please contact support.",
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
 
     return {"message": "Dealer rejected"}
 
@@ -270,13 +282,19 @@ async def suspend_dealer(dealer_id: str, admin_id: str, reason: str = None) -> d
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(dealer["userId"], "Account Suspended", reason or "Your account has been suspended. Please contact support.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            dealer["userId"],
+            "Account Suspended",
+            reason or "Your account has been suspended. Please contact support.",
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
 
     return {"message": "Dealer suspended"}
 
