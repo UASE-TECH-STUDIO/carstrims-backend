@@ -36,7 +36,6 @@ async def send_partner_request(
     db = get_db()
     dealer_id = data.dealerId
 
-    # Accept both ObjectId and DLR-XXXXXXXX format
     if ObjectId.is_valid(dealer_id):
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
     else:
@@ -49,7 +48,6 @@ async def send_partner_request(
     dealer_mongo_id = str(dealer["_id"])
     user_id = str(current_user["_id"])
 
-    # Check if already linked
     existing = await db["partner_links"].find_one({
         "userId": user_id,
         "dealerId": dealer_mongo_id,
@@ -78,7 +76,6 @@ async def send_partner_request(
 
     await db["partner_links"].insert_one(link_doc)
 
-    # Notify dealer
     await db["notifications"].insert_one({
         "receiverId": dealer["userId"],
         "senderId": user_id,
@@ -94,7 +91,6 @@ async def send_partner_request(
 
 @router.get("/my-links")
 async def get_my_links(current_user: dict = Depends(get_current_user)):
-    """Get all dealer links for the current partner user"""
     db = get_db()
     links = await db["partner_links"].find(
         {"userId": str(current_user["_id"])}
@@ -313,17 +309,23 @@ async def approve_partner(link_id: str, current_user: dict = Depends(get_current
         "receiverId": link["userId"],
         "type": "partner_request",
         "title": "Partnership Approved!",
-        "message": f"Your partnership request has been approved. You are now linked with the dealer.",
+        "message": "Your partnership request has been approved. You are now linked with the dealer.",
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(link["userId"], "Partnership Approved!", f"Your partnership request has been approved. You are now linked with the dealer.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            link["userId"],
+            "Partnership Approved!",
+            "Your partnership request has been approved. You are now linked with the dealer.",
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
 
     return {"message": "Partner approved"}
 
@@ -360,13 +362,19 @@ async def reject_partner(
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
-# Fire push notification
-try:
-    import asyncio as _asyncio
-    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
-    _asyncio.create_task(_swpu(link["userId"], "Partnership Request Declined", data.reason or "Your partnership request was declined.", "/dashboard"))
-except Exception as _pe:
-    pass
+
+    # Fire push notification
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(
+            link["userId"],
+            "Partnership Request Declined",
+            data.reason or "Your partnership request was declined.",
+            "/dashboard",
+        ))
+    except Exception as _pe:
+        pass
 
     return {"message": "Partner rejected"}
 
