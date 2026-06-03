@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timedelta
+from datetime import datetime, timedelta
 from bson import ObjectId
 from fastapi import HTTPException
 from app.database.connection import get_db
@@ -137,7 +137,7 @@ async def get_recent_activity(limit: int = 20) -> list:
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(s.get("dealerId", ""))}) if ObjectId.is_valid(s.get("dealerId", "")) else None
         activities.append({
             "type": "sale",
-            "icon": "💰",
+            "icon": "",
             "message": f"{dealer.get('companyName', 'A dealer') if dealer else 'A dealer'} sold car {s.get('carId', '')}",
             "amount": s.get("sellingPrice", 0),
             "time": s.get("soldAt", datetime.utcnow()).isoformat() if hasattr(s.get("soldAt", datetime.utcnow()), "isoformat") else str(s.get("soldAt", "")),
@@ -147,7 +147,7 @@ async def get_recent_activity(limit: int = 20) -> list:
     for d in recent_dealers:
         activities.append({
             "type": "registration",
-            "icon": "🏢",
+            "icon": "",
             "message": f"{d.get('companyName', 'New dealer')} registered",
             "time": d.get("createdAt", datetime.utcnow()).isoformat() if hasattr(d.get("createdAt", datetime.utcnow()), "isoformat") else str(d.get("createdAt", "")),
         })
@@ -157,7 +157,7 @@ async def get_recent_activity(limit: int = 20) -> list:
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(c.get("dealerId", ""))}) if ObjectId.is_valid(c.get("dealerId", "")) else None
         activities.append({
             "type": "car",
-            "icon": "🚗",
+            "icon": "",
             "message": f"{dealer.get('companyName', 'A dealer') if dealer else 'A dealer'} listed {c.get('brand', '')} {c.get('model', '')}",
             "time": c.get("createdAt", datetime.utcnow()).isoformat() if hasattr(c.get("createdAt", datetime.utcnow()), "isoformat") else str(c.get("createdAt", "")),
         })
@@ -295,6 +295,13 @@ async def admin_warn_dealer(dealer_id: str, note: str) -> dict:
             "isRead": False,
             "createdAt": datetime.utcnow(),
         })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(dealer["userId"], "Account Warning", note, "/dashboard"))
+except Exception as _pe:
+    pass
 
     return {"message": "Warning sent to dealer"}
 

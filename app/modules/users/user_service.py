@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from bson import ObjectId
 from fastapi import HTTPException
 from app.database.connection import get_db
@@ -11,7 +11,7 @@ def gen_id(prefix: str) -> str:
     return prefix + "-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 
-# ── FAVORITES ────────────────────────────────────────────────────────────────
+#  FAVORITES 
 # IMPORTANT: both the public feed route (POST /public/cars/{id}/favorite)
 # and the user dashboard route (GET /users/favorites) use this same service
 # and the same MongoDB collection: "favorites"
@@ -74,7 +74,7 @@ async def get_favorites(user_id: str) -> list:
     return result
 
 
-# ── LIKES ────────────────────────────────────────────────────────────────────
+#  LIKES 
 
 async def toggle_like(user_id: str, car_id: str) -> dict:
     db = get_db()
@@ -122,7 +122,7 @@ async def get_user_likes(user_id: str) -> list:
     return [l["carId"] for l in likes]
 
 
-# ── PROFILE ───────────────────────────────────────────────────────────────────
+#  PROFILE 
 
 async def update_user_profile(user_id: str, data: dict) -> dict:
     db = get_db()
@@ -140,7 +140,7 @@ async def update_user_profile(user_id: str, data: dict) -> dict:
     return s
 
 
-# ── SPECIAL REQUESTS ──────────────────────────────────────────────────────────
+#  SPECIAL REQUESTS 
 
 async def create_special_request(user_id: str, data: dict) -> dict:
     db = get_db()
@@ -200,7 +200,7 @@ async def get_user_requests(user_id: str) -> list:
         s = serialize_doc(r)
         if r.get("dealerId") and ObjectId.is_valid(r["dealerId"]):
             dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(r["dealerId"])})
-            s["dealerName"] = dealer.get("companyName") if dealer else "—"
+            s["dealerName"] = dealer.get("companyName") if dealer else ""
         result.append(s)
     return result
 
@@ -212,8 +212,8 @@ async def get_dealer_requests(dealer_id: str) -> list:
     for r in requests:
         s = serialize_doc(r)
         user = await db["users"].find_one({"_id": ObjectId(r["userId"])})
-        s["userName"] = user.get("fullName") if user else "—"
-        s["userPhone"] = user.get("phone") if user else "—"
+        s["userName"] = user.get("fullName") if user else ""
+        s["userPhone"] = user.get("phone") if user else ""
         result.append(s)
     return result
 
@@ -240,10 +240,17 @@ async def respond_to_request(request_id: str, dealer_id: str, response: str, pro
         "title": "Dealer Responded to Your Request",
         "message": response[:100], "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(req["userId"], "Dealer Responded to Your Request", response[:100], "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "Response sent"}
 
 
-# ── APPOINTMENTS ──────────────────────────────────────────────────────────────
+#  APPOINTMENTS 
 
 async def create_appointment(user_id: str, data: dict) -> dict:
     db = get_db()

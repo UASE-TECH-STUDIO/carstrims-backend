@@ -1,4 +1,4 @@
-﻿"""
+"""
 Follow / Subscribe system
 """
 from fastapi import APIRouter, Depends, Query
@@ -41,7 +41,7 @@ async def follow_dealer(dealer_id: str, current_user: dict = Depends(get_current
         "createdAt": datetime.utcnow(),
     })
 
-    # Notify dealer — store actorName so overview activity works
+    # Notify dealer  store actorName so overview activity works
     if dealer.get("userId"):
         actor_name = current_user.get("fullName", "Someone")
         await db["notifications"].insert_one({
@@ -56,6 +56,18 @@ async def follow_dealer(dealer_id: str, current_user: dict = Depends(get_current
             "data": {"userId": uid, "userName": actor_name},
             "createdAt": datetime.utcnow(),
         })
+        # Push notification to dealer
+        try:
+            import asyncio as _ai
+            from app.modules.notifications.push_service import send_web_push_to_user as _wp
+            _ai.create_task(_wp(
+                str(dealer["userId"]),
+                "New Follower",
+                f"{actor_name} started following your dealership.",
+                "/dashboard/dealer"
+            ))
+        except Exception:
+            pass
 
     count = await db["follows"].count_documents({"dealerId": dealer_mongo_id})
     return {"following": True, "followerCount": count, "message": f"Now following {dealer.get('companyName')}"}

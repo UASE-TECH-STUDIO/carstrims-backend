@@ -244,6 +244,12 @@ async def request_movement_approval(
                 "createdAt": datetime.utcnow(),
                 "data": {"requestId": req_id},
             })
+            try:
+                import asyncio as _ai
+                from app.modules.notifications.push_service import send_web_push_to_user as _wp
+                _ai.create_task(_wp(str(dealer_doc["userId"]), "Vehicle Movement Approval Requested", f"{current_user.get('fullName')} requests approval to move a vehicle.", "/dashboard"))
+            except Exception:
+                pass
     else:
         # Notify all active dealers
         dealers = await db["dealer_organizations"].find({"status": "approved"}, {"userId": 1}).to_list(1000)
@@ -259,6 +265,15 @@ async def request_movement_approval(
         } for d in dealers if d.get("userId")]
         if notifs:
             await db["notifications"].insert_many(notifs)
+            # Push to all notified dealers
+            try:
+                import asyncio as _aib
+                from app.modules.notifications.push_service import send_web_push_to_user as _wpb
+                for _d in dealers:
+                    if _d.get("userId"):
+                        _aib.create_task(_wpb(str(_d["userId"]), "Vehicle Movement Approval Requested", f"{current_user.get('fullName')} requests approval to move a vehicle.", "/dashboard"))
+            except Exception:
+                pass
 
     return {"message": "Approval request sent", "requestId": req_id}
 
@@ -307,6 +322,12 @@ async def approve_movement_request(
         "createdAt": datetime.utcnow(),
         "data": {"requestId": req_id},
     })
+    try:
+        import asyncio as _ai2
+        from app.modules.notifications.push_service import send_web_push_to_user as _wp2
+        _ai2.create_task(_wp2(str(req["requestedBy"]), "Movement Approved", f"{dealer.get('companyName')} approved your movement request.", "/dashboard"))
+    except Exception:
+        pass
 
     return {
         "message": "Movement approved",

@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from bson import ObjectId
 from fastapi import HTTPException
 from app.database.connection import get_db
@@ -118,6 +118,13 @@ async def approve_partner(link_id: str, dealer_id: str) -> dict:
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(link["userId"], "Partner Request Approved", f"Your partnership request has been approved. Welcome aboard!", "/dashboard"))
+except Exception as _pe:
+    pass
 
     return {"message": "Partner approved successfully"}
 

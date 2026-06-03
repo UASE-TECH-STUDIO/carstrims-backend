@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, Body, UploadFile, File
+from fastapi import APIRouter, Depends, Query, Body, UploadFile, File
 from typing import Optional, List
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -197,6 +197,13 @@ async def approve_dealer(dealer_id: str, admin=Depends(require_admin)):
         "message": "Your dealership has been approved. You now have full access to your dashboard.",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(dealer["userId"], "Dealership Approved ", "Your dealership has been approved. You now have full access to your dashboard.", "/dashboard"))
+except Exception as _pe:
+    pass
     # Send real email + WhatsApp notification
     try:
         user_obj = await db["users"].find_one({"_id": ObjectId(dealer["userId"])})
@@ -225,6 +232,13 @@ async def reject_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(req
         "title": "Application Rejected", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(dealer["userId"], "Application Rejected", reason, "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "Dealer rejected"}
 
 
@@ -244,6 +258,13 @@ async def suspend_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(re
         "title": "Account Suspended ", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(dealer["userId"], "Account Suspended ", note, "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "Dealer suspended"}
 
 
@@ -262,6 +283,13 @@ async def warn_dealer(dealer_id: str, data: dict = Body({}), admin=Depends(requi
         "title": "Account Warning ", "message": note,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(dealer["userId"], "Account Warning ", note, "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "Warning sent"}
 
 
@@ -439,6 +467,13 @@ async def suspend_user(user_id: str, data: dict = Body({}), admin=Depends(requir
         "title": "Account Suspended ", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(user_id, "Account Suspended ", reason, "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "User suspended"}
 
 
@@ -452,6 +487,13 @@ async def unsuspend_user(user_id: str, admin=Depends(require_admin)):
         "message": "Your account has been reactivated. Welcome back!",
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(user_id, "Account Reactivated ", "Your account has been reactivated. Welcome back!", "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "User unsuspended"}
 
 
@@ -464,6 +506,13 @@ async def warn_user(user_id: str, data: dict = Body({}), admin=Depends(require_a
         "title": "Account Warning ", "message": reason,
         "isRead": False, "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(user_id, "Account Warning ", reason, "/dashboard"))
+except Exception as _pe:
+    pass
     return {"message": "Warning sent"}
 
 

@@ -317,6 +317,13 @@ async def approve_partner(link_id: str, current_user: dict = Depends(get_current
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(link["userId"], "Partnership Approved!", f"Your partnership request has been approved. You are now linked with the dealer.", "/dashboard"))
+except Exception as _pe:
+    pass
 
     return {"message": "Partner approved"}
 
@@ -353,6 +360,13 @@ async def reject_partner(
         "isRead": False,
         "createdAt": datetime.utcnow(),
     })
+# Fire push notification
+try:
+    import asyncio as _asyncio
+    from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+    _asyncio.create_task(_swpu(link["userId"], "Partnership Request Declined", data.reason or "Your partnership request was declined.", "/dashboard"))
+except Exception as _pe:
+    pass
 
     return {"message": "Partner rejected"}
 

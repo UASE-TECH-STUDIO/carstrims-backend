@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -248,6 +248,12 @@ async def create_appointment(data: AppointmentCreate, current_user: dict = Depen
             "message": f"{current_user.get('fullName','A user')} wants to schedule a {data.type.replace('_',' ')}",
             "isRead": False, "createdAt": datetime.utcnow(),
         })
+        try:
+            import asyncio as _ai
+            from app.modules.notifications.push_service import send_web_push_to_user as _wp
+            _ai.create_task(_wp(str(dealer["userId"]), "New Appointment Request", f"{current_user.get('fullName','A user')} wants to schedule an appointment.", "/dashboard"))
+        except Exception:
+            pass
     return serialize_doc(doc)
 
 
@@ -283,6 +289,12 @@ async def buyer_accept_request(
                 "isRead": False, "createdAt": datetime.utcnow(),
                 "data": {"requestId": request_id},
             })
+            try:
+                import asyncio as _ai2
+                from app.modules.notifications.push_service import send_web_push_to_user as _wp2
+                _ai2.create_task(_wp2(str(dealer["userId"]), "Order Accepted!", f"{current_user.get('fullName','Buyer')} accepted your offer.", "/dashboard"))
+            except Exception:
+                pass
     return {"message": "Accepted. Journey started!"}
 
 

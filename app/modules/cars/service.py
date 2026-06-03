@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 from bson import ObjectId
 from fastapi import HTTPException, status
 from app.database.connection import get_db
@@ -235,7 +235,7 @@ async def mark_car_sold(
         "dealerId": dealer_id,
         "type": "car_sold",
         "title": "Car Sold!",
-        "message": f"{car.get('brand')} {car.get('model')} {car.get('year')} has been sold for ₦{selling_price:,.0f}",
+        "message": f"{car.get('brand')} {car.get('model')} {car.get('year')} has been sold for {selling_price:,.0f}",
         "isRead": False,
         "data": {"transactionId": trans_id, "carId": car.get("carId")},
         "createdAt": datetime.utcnow(),
