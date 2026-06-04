@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from typing import Optional
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -171,6 +171,18 @@ async def start_conversation(
             "data": {"conversationId": conv_id},
             "createdAt": now,
         })
+        # Fire push notification
+        try:
+            import asyncio as _asyncio
+            from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+            _asyncio.create_task(_swpu(
+                receiver_mongo_id,
+                f"New message from {current_user.get('fullName', 'Someone')}",
+                data.message[:80],
+                "/dashboard",
+            ))
+        except Exception as _pe:
+            print(f"[Push] Message push error: {_pe}")
 
     return {"conversationId": conv_id, "message": "Conversation started"}
 
@@ -244,6 +256,18 @@ async def send_message(
         "data": {"conversationId": conv_id},
         "createdAt": now,
     })
+    # Fire push notification
+    try:
+        import asyncio as _asyncio2
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu2
+        _asyncio2.create_task(_swpu2(
+            receiver_id,
+            f"New message from {current_user.get('fullName', 'Someone')}",
+            data.imageUrl and "Sent a photo" or data.message[:80],
+            "/dashboard",
+        ))
+    except Exception as _pe2:
+        print(f"[Push] Reply push error: {_pe2}")
 
     return serialize_doc(msg_doc)
 
