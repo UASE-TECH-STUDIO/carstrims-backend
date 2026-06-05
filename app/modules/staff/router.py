@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional, List
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_user
@@ -119,9 +119,12 @@ async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(ge
 
     temp_password = data.password or "Staff@" + "".join(random.choices(string.digits, k=6))
 
+    # Auto-generate username from email if not provided
+    auto_username = data.username or data.email.split("@")[0]
+
     user_doc = {
         "fullName": data.fullName,
-        "username": data.username,
+        "username": auto_username,
         "email": data.email,
         "passwordHash": hash_password(temp_password),
         "phone": data.phone,

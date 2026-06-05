@@ -1,10 +1,9 @@
-﻿from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
 
 class StaffCreateRequest(BaseModel):
     fullName: str
-    username: str
     email: EmailStr
     phone: str
     whatsapp: Optional[str] = None
@@ -12,6 +11,7 @@ class StaffCreateRequest(BaseModel):
     position: str
     password: Optional[str] = "Staff@1234"
     permissions: Optional[List[str]] = []
+    username: Optional[str] = None  # auto-generated if not provided
 
 
 class StaffUpdateRequest(BaseModel):

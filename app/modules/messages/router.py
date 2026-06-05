@@ -472,3 +472,74 @@ async def admin_reset_password_command(
         "userEmail": user.get("email"),
         "userName": user.get("fullName"),
     }
+
+@router.get("/my-team")
+async def get_my_team(current_user: dict = Depends(get_current_user)):
+    """
+    Returns the dealer's staff members (for quick messaging within the team).
+    Works for both DEALER_ADMIN (gets their staff) and DEALER_STAFF (gets dealer + siblings).
+    """
+    db = get_db()
+    uid = str(current_user["_id"])
+    role = current_user.get("role")
+    team = []
+
+    if role == "DEALER_ADMIN":
+        # Get all active staff for this dealer
+        dealer = await db["dealer_organizations"].find_one({"userId": uid})
+        if dealer:
+            staff_list = await db["staff_accounts"].find(
+                {"dealerId": dealer["_id"], "status": {"$ne": "suspended"}}
+            ).to_list(50)
+            for s in staff_list:
+                if s.get("userId"):
+                    u = await db["users"].find_one({"_id": ObjectId(s["userId"])})
+                    if u:
+                        team.append({
+                            "userId":    str(u["_id"]),
+                            "fullName":  s.get("fullName") or u.get("fullName"),
+                            "email":     u.get("email"),
+                            "role":      "DEALER_STAFF",
+                            "position":  s.get("position","Staff"),
+                            "profilePicture": u.get("profilePicture") or s.get("profilePicture"),
+                            "isTeamMember": True,
+                        })
+
+    elif role == "DEALER_STAFF":
+        # Get dealer + other staff in same company
+        staff_self = await db["staff_accounts"].find_one({"userId": uid})
+        if staff_self:
+            dealer_id = staff_self.get("dealerId")
+            # Add the dealer (owner)
+            dealer = await db["dealer_organizations"].find_one({"_id": dealer_id})
+            if dealer:
+                owner = await db["users"].find_one({"_id": ObjectId(dealer["userId"])}) if dealer.get("userId") else None
+                if owner:
+                    team.append({
+                        "userId":   str(owner["_id"]),
+                        "fullName": dealer.get("companyName") or owner.get("fullName"),
+                        "email":    owner.get("email"),
+                        "role":     "DEALER_ADMIN",
+                        "position": "Dealer / Owner",
+                        "profilePicture": dealer.get("logo") or owner.get("profilePicture"),
+                        "isTeamMember": True,
+                    })
+            # Add other staff
+            siblings = await db["staff_accounts"].find(
+                {"dealerId": dealer_id, "userId": {"$ne": uid}, "status": {"$ne": "suspended"}}
+            ).to_list(50)
+            for s in siblings:
+                if s.get("userId"):
+                    u = await db["users"].find_one({"_id": ObjectId(s["userId"])})
+                    if u:
+                        team.append({
+                            "userId":   str(u["_id"]),
+                            "fullName": s.get("fullName") or u.get("fullName"),
+                            "email":    u.get("email"),
+                            "role":     "DEALER_STAFF",
+                            "position": s.get("position","Staff"),
+                            "profilePicture": u.get("profilePicture"),
+                            "isTeamMember": True,
+                        })
+
+    return team
