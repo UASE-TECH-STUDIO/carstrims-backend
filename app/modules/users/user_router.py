@@ -455,7 +455,7 @@ async def get_dealer_requests(
     from app.modules.dealers.service import get_dealer_by_user_id
 
     try:
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     except Exception:
         from fastapi import HTTPException
         raise HTTPException(403, "Not a dealer account")
@@ -553,7 +553,7 @@ async def dealer_respond_to_request(
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
     try:
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     except Exception:
         from fastapi import HTTPException
         raise HTTPException(403, "Not a dealer")
@@ -632,7 +632,7 @@ async def add_journey_milestone(
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
     try:
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     except Exception:
         from fastapi import HTTPException
         raise HTTPException(403, "Not a dealer")
@@ -695,7 +695,7 @@ async def set_payment_plan(
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
     try:
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     except Exception:
         from fastapi import HTTPException
         raise HTTPException(403, "Not a dealer")

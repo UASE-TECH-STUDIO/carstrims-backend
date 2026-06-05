@@ -105,7 +105,7 @@ async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(ge
     dealer = None
 
     if current_user["role"] == "DEALER_ADMIN":
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     elif staff_self and "create_staff" in (staff_self.get("permissions") or []):
         dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(staff_self["dealerId"])})
     else:
@@ -176,7 +176,7 @@ async def list_staff(
     staff_self = await db["staff_accounts"].find_one({"userId": str(current_user["_id"])})
 
     if current_user["role"] == "DEALER_ADMIN":
-        dealer = await get_dealer_by_user_id(str(current_user["_id"]))
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
         dealer_id = dealer["_id"]
     elif staff_self:
         dealer_id = staff_self["dealerId"]
