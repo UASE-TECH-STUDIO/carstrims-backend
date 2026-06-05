@@ -11,14 +11,14 @@ import random, string
 
 class StaffCreateRequest(BaseModel):
     fullName: str
-    username: str
     email: str
-    password: str
-    phone: Optional[str] = None
+    phone: str
+    position: str
     whatsapp: Optional[str] = None
     address: Optional[str] = None
-    position: str
+    password: Optional[str] = "Staff@1234"
     permissions: List[str] = []
+    username: Optional[str] = None  # auto-generated from email
 
 
 class StaffUpdateRequest(BaseModel):
