@@ -36,7 +36,7 @@ class DealerSetupRequest(BaseModel):
 @router.post("/setup")
 async def setup_dealer(
     data: DealerSetupRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Creates the dealer's organization profile.
@@ -89,7 +89,7 @@ async def setup_dealer(
 
 
 @router.get("/me")
-async def get_my_dealer(current_user: dict = Depends(get_current_user)):
+async def get_my_dealer(current_user: dict = Depends(get_current_dealer_or_staff)):
     """
     Returns the dealer profile for the current user.
     Works for both pending and approved dealers so the layout can check status.

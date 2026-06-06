@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_dealer_or_staff
 from app.modules.dealers.service import serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
@@ -443,7 +443,7 @@ async def abort_request(
 @router.get("/requests/dealer")
 async def get_dealer_requests(
     status: str = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Dealer: returns all requests from car_requests collection.
@@ -508,7 +508,7 @@ async def get_dealer_requests(
 @router.get("/requests/{request_id}")
 async def get_request_detail(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Get full detail of a single request (buyer or dealer can access)."""
     db = get_db()
@@ -542,7 +542,7 @@ async def get_request_detail(
 async def dealer_respond_to_request(
     request_id: str,
     data: dict = Body({}),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Dealer responds to a request. Can:
@@ -623,7 +623,7 @@ async def dealer_respond_to_request(
 async def add_journey_milestone(
     request_id: str,
     data: dict = Body({}),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Dealer adds a shipping/journey milestone with optional evidence.
@@ -689,7 +689,7 @@ async def add_journey_milestone(
 async def set_payment_plan(
     request_id: str,
     data: dict = Body({}),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Dealer sets up the payment plan for an accepted request."""
     db = get_db()

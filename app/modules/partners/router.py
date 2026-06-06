@@ -174,7 +174,7 @@ async def partner_dashboard(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/my-earnings")
-async def partner_earnings(current_user: dict = Depends(get_current_user)):
+async def partner_earnings(current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
     links = await db["partner_links"].find({"userId": str(current_user["_id"])}).to_list(100)
     all_car_ids = []

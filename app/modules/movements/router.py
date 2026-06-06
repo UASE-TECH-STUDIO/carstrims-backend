@@ -12,7 +12,7 @@ import random, string
 class MovementCreateRequest(BaseModel):
     carId: str
     takenByName: str
-    takenByPhone: str
+    takenByPhone: Optional[str] = None
     takenByAddress: Optional[str] = None
     takenByIdType: Optional[str] = None
     takenByIdNumber: Optional[str] = None
@@ -20,6 +20,8 @@ class MovementCreateRequest(BaseModel):
     purpose: Optional[str] = "test_drive"
     expectedReturnTime: Optional[str] = None
     permittedBy: Optional[str] = None
+    approvalType: Optional[str] = "self"
+    approverUserIds: Optional[List[str]] = []
     notes: Optional[str] = None
 
 
@@ -39,7 +41,7 @@ def gen_id():
 @router.post("/")
 async def log_movement(
     data: MovementCreateRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
@@ -71,6 +73,12 @@ async def log_movement(
         "permittedBy": data.permittedBy,
         "notes": data.notes,
         "status": "out",
+        "approvalType": data.approvalType or "self",
+        "approverUserIds": data.approverUserIds or [],
+        "approvalStatus": "approved" if (data.approvalType == "self") else "pending",
+        "approvedBy": str(current_user["_id"]) if (data.approvalType == "self") else None,
+        "approvedByName": current_user.get("fullName") if (data.approvalType == "self") else None,
+        "approvedAt": datetime.utcnow() if (data.approvalType == "self") else None,
         "timeOut": datetime.utcnow(),
         "timeReturned": None,
         "returnedToName": None,
@@ -86,6 +94,53 @@ async def log_movement(
 
     result = await db["vehicle_movement_logs"].insert_one(doc)
     doc["_id"] = result.inserted_id
+    movement_id = str(result.inserted_id)
+
+    # Notify approvers for non-self approval (non-blocking)
+    approval_type = data.approvalType or "self"
+    if approval_type != "self":
+        try:
+            import asyncio as _ai
+            from app.modules.notifications.push_service import send_web_push_to_user as _wp
+            car_name = f"{car.get('brand','')} {car.get('model','')}".strip() or data.carId
+            notif_msg = f"{current_user.get('fullName','Someone')} requests movement approval for {car_name}"
+
+            notify_ids = set()
+
+            # Always notify dealer admin
+            if dealer.get("userId"):
+                notify_ids.add(str(dealer["userId"]))
+
+            # Add selected approvers
+            for uid in (data.approverUserIds or []):
+                if uid:
+                    notify_ids.add(uid)
+
+            # If "everyone" - add all active staff
+            if approval_type == "everyone":
+                all_staff = await db["staff_accounts"].find(
+                    {"dealerId": dealer["_id"], "status": {"$ne": "suspended"}}
+                ).to_list(50)
+                for s in all_staff:
+                    if s.get("userId"):
+                        notify_ids.add(str(s["userId"]))
+
+            # Remove self
+            notify_ids.discard(str(current_user["_id"]))
+
+            for uid in notify_ids:
+                await db["notifications"].insert_one({
+                    "receiverId": uid,
+                    "type": "movement_approval",
+                    "title": "Movement Approval Required",
+                    "message": notif_msg,
+                    "data": {"movementId": movement_id},
+                    "isRead": False,
+                    "createdAt": datetime.utcnow(),
+                })
+                _ai.create_task(_wp(uid, "Movement Approval Required", notif_msg, "/dashboard"))
+        except Exception as _e:
+            print(f"[Movement] Notification error: {_e}")
     return serialize_doc(doc)
 
 
@@ -94,7 +149,7 @@ async def list_movements(
     status: Optional[str] = Query(None),
     skip: int = Query(0),
     limit: int = Query(30),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
@@ -115,7 +170,7 @@ async def list_movements(
 async def return_vehicle(
     movement_id: str,
     data: MovementReturnRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
@@ -153,7 +208,7 @@ async def return_vehicle(
 async def edit_movement(
     movement_id: str,
     data: dict = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
@@ -281,7 +336,7 @@ async def request_movement_approval(
 @router.post("/pending-approval/{req_id}/approve")
 async def approve_movement_request(
     req_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Any dealer can approve a pending movement request."""
     db = get_db()
@@ -338,7 +393,7 @@ async def approve_movement_request(
 
 @router.get("/pending-approvals")
 async def get_pending_movement_approvals(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """Get all pending movement approval requests - available to all dealers."""
     db = get_db()
@@ -350,7 +405,7 @@ async def get_pending_movement_approvals(
 
 @router.get("/approvers")
 async def get_available_approvers(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     """
     Returns list of all dealers and staff for this company

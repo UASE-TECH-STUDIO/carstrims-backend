@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Body
 from typing import Optional, List
 from pydantic import BaseModel
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_dealer_or_staff
 from app.modules.dealers.service import serialize_doc
 from app.database.connection import get_db
 from bson import ObjectId
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/v1/staff", tags=["Staff"])
 
 
 @router.get("/me")
-async def get_my_staff_profile(current_user: dict = Depends(get_current_user)):
+async def get_my_staff_profile(current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
     staff = await db["staff_accounts"].find_one({"userId": str(current_user["_id"])})
     if not staff:
@@ -83,7 +83,7 @@ async def update_my_profile(
 
 
 @router.get("/me/dealer")
-async def get_my_dealer_info(current_user: dict = Depends(get_current_user)):
+async def get_my_dealer_info(current_user: dict = Depends(get_current_dealer_or_staff)):
     """Staff fetches their own dealer's info"""
     db = get_db()
     staff = await db["staff_accounts"].find_one({"userId": str(current_user["_id"])})
@@ -95,7 +95,7 @@ async def get_my_dealer_info(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/")
-async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(get_current_user)):
+async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(get_current_dealer_or_staff)):
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
     from app.auth.password import hash_password
@@ -169,7 +169,7 @@ async def list_staff(
     search: Optional[str] = Query(None),
     skip: int = Query(0),
     limit: int = Query(20),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_dealer_or_staff),
 ):
     db = get_db()
     from app.modules.dealers.service import get_dealer_by_user_id
