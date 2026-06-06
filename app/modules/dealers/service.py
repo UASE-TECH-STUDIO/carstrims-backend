@@ -189,6 +189,22 @@ async def get_dealer_by_user_id(user_id: str, current_user: dict = None) -> dict
         if dealer:
             return serialize_doc(dealer)
 
+    # Strategy 5: Look up dealerId from the users collection (stored during staff creation)
+    if current_user:
+        uid = str(current_user["_id"])
+        user_doc = await db["users"].find_one({"_id": ObjectId(uid)}) if ObjectId.is_valid(uid) else None
+        if user_doc and user_doc.get("dealerId"):
+            did = user_doc["dealerId"]
+            try:
+                if isinstance(did, ObjectId):
+                    dealer = await db["dealer_organizations"].find_one({"_id": did})
+                elif ObjectId.is_valid(str(did)):
+                    dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(str(did))})
+                if dealer:
+                    return serialize_doc(dealer)
+            except Exception:
+                pass
+
     raise HTTPException(status_code=404, detail="Dealer profile not found")
 
 

@@ -144,6 +144,65 @@ async def log_movement(
     return serialize_doc(doc)
 
 
+
+
+@router.patch("/{movement_id}/approve")
+async def approve_movement(
+    movement_id: str,
+    current_user: dict = Depends(get_current_dealer_or_staff),
+):
+    """Approve a pending movement request. First approver wins."""
+    db = get_db()
+    from bson import ObjectId as _OID
+    
+    # Find movement
+    mov = await db["vehicle_movement_logs"].find_one({"movementId": movement_id})
+    if not mov and _OID.is_valid(movement_id):
+        mov = await db["vehicle_movement_logs"].find_one({"_id": _OID(movement_id)})
+    if not mov:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Movement not found")
+    
+    if mov.get("approvalStatus") == "approved":
+        return serialize_doc(mov)  # Already approved
+    
+    approver_name = current_user.get("fullName") or current_user.get("username") or "Staff"
+    now = datetime.utcnow()
+    
+    await db["vehicle_movement_logs"].update_one(
+        {"_id": mov["_id"]},
+        {"$set": {
+            "approvalStatus": "approved",
+            "approvedBy": str(current_user["_id"]),
+            "approvedByName": approver_name,
+            "approvedAt": now,
+            "updatedAt": now,
+        }}
+    )
+    
+    # Notify the person who logged the movement
+    if str(current_user["_id"]) != str(mov.get("loggedBy", "")):
+        try:
+            import asyncio as _ai
+            from app.modules.notifications.push_service import send_web_push_to_user as _wp
+            msg = f"{approver_name} approved the movement of {mov.get('carBrand','')} {mov.get('carModel','')}"
+            logged_by = str(mov.get("loggedBy", ""))
+            if logged_by:
+                await db["notifications"].insert_one({
+                    "receiverId": logged_by,
+                    "type": "movement_approved",
+                    "title": "Movement Approved",
+                    "message": msg,
+                    "isRead": False,
+                    "createdAt": now,
+                })
+                _ai.create_task(_wp(logged_by, "Movement Approved ", msg, "/dashboard"))
+        except Exception as _e:
+            print(f"[Approve] Notify error: {_e}")
+    
+    updated = await db["vehicle_movement_logs"].find_one({"_id": mov["_id"]})
+    return serialize_doc(updated)
+
 @router.get("/")
 async def list_movements(
     status: Optional[str] = Query(None),
@@ -175,9 +234,11 @@ async def return_vehicle(
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
-    mov = await db["vehicle_movement_logs"].find_one({
-        "movementId": movement_id, "dealerId": dealer["_id"]
-    })
+    # Find by movementId string OR MongoDB _id
+    from bson import ObjectId as _OID
+    mov = await db["vehicle_movement_logs"].find_one({"movementId": movement_id})
+    if not mov and _OID.is_valid(movement_id):
+        mov = await db["vehicle_movement_logs"].find_one({"_id": _OID(movement_id)})
     if not mov:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Movement not found")
@@ -213,9 +274,11 @@ async def edit_movement(
     db = get_db()
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
 
-    mov = await db["vehicle_movement_logs"].find_one({
-        "movementId": movement_id, "dealerId": dealer["_id"]
-    })
+    # Find by movementId string OR MongoDB _id
+    from bson import ObjectId as _OID
+    mov = await db["vehicle_movement_logs"].find_one({"movementId": movement_id})
+    if not mov and _OID.is_valid(movement_id):
+        mov = await db["vehicle_movement_logs"].find_one({"_id": _OID(movement_id)})
     if not mov:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Movement not found")
