@@ -146,6 +146,10 @@ async def get_dealer_by_user_id(user_id: str, current_user: dict = None) -> dict
     from bson import ObjectId
     db = get_db()
 
+    # Strategy 0: Use pre-resolved dealer doc if available (fastest path)
+    if current_user and current_user.get("_dealer"):
+        return current_user["_dealer"]
+
     # Strategy 1: Staff user  use _resolved_dealer_id injected by get_current_dealer_or_staff
     if current_user and current_user.get("_resolved_dealer_id"):
         dealer_id = current_user["_resolved_dealer_id"]

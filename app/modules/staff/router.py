@@ -39,6 +39,53 @@ def gen_staff_id():
 
 router = APIRouter(prefix="/api/v1/staff", tags=["Staff"])
 
+@router.get("/debug-me")
+async def debug_staff_link(current_user: dict = Depends(get_current_user)):
+    """Diagnostic: shows what dealer this staff account resolves to."""
+    from bson import ObjectId
+    db = get_db()
+    uid = str(current_user["_id"])
+    role = current_user.get("role")
+    
+    result = {
+        "userId": uid,
+        "role": role,
+        "email": current_user.get("email"),
+        "userDealerId": str(current_user.get("dealerId", "NOT SET")),
+    }
+    
+    # Check staff_accounts
+    staff = await db["staff_accounts"].find_one({"userId": uid})
+    if staff:
+        raw_dealer_id = staff.get("dealerId")
+        result["staffAccountFound"] = True
+        result["staffDealerIdRaw"] = str(raw_dealer_id)
+        result["staffDealerIdType"] = type(raw_dealer_id).__name__
+        result["staffPermissions"] = staff.get("permissions", [])
+        
+        # Try to find dealer
+        dealer = None
+        if isinstance(raw_dealer_id, ObjectId):
+            dealer = await db["dealer_organizations"].find_one({"_id": raw_dealer_id})
+        elif raw_dealer_id and ObjectId.is_valid(str(raw_dealer_id)):
+            dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(str(raw_dealer_id))})
+        
+        if dealer:
+            result["dealerFound"] = True
+            result["dealerName"] = dealer.get("companyName")
+            result["dealerMongoId"] = str(dealer.get("_id"))
+            result["dealerDealerId"] = dealer.get("dealerId")
+        else:
+            result["dealerFound"] = False
+            result["hint"] = "dealerId in staff_accounts does not match any dealer_organizations._id"
+    else:
+        result["staffAccountFound"] = False
+        result["hint"] = f"No staff_accounts record found with userId={uid}"
+    
+    return result
+
+
+
 
 @router.get("/me")
 async def get_my_staff_profile(current_user: dict = Depends(get_current_dealer_or_staff)):
