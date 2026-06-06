@@ -140,26 +140,56 @@ async def get_dealer_by_id(dealer_id: str) -> dict:
 
 async def get_dealer_by_user_id(user_id: str, current_user: dict = None) -> dict:
     """
-    Resolves the dealer for a user_id.
-    If current_user has _resolved_dealer_id (staff), uses that directly.
+    Resolves the dealer for any user (dealer admin or staff).
+    Tries multiple resolution strategies to always find the dealer.
     """
+    from bson import ObjectId
     db = get_db()
 
-    # Staff: dealer id already resolved by dependency
+    # Strategy 1: Staff user  use _resolved_dealer_id injected by get_current_dealer_or_staff
     if current_user and current_user.get("_resolved_dealer_id"):
-        from bson import ObjectId
         dealer_id = current_user["_resolved_dealer_id"]
-        if ObjectId.is_valid(dealer_id):
-            dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
-        else:
-            dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+        if dealer_id and dealer_id not in ("None", "", "null"):
+            try:
+                if ObjectId.is_valid(dealer_id):
+                    dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
+                else:
+                    dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+                if dealer:
+                    return serialize_doc(dealer)
+            except Exception:
+                pass
+
+    # Strategy 2: Staff user  look up directly from staff_accounts
+    if current_user and current_user.get("role") == "DEALER_STAFF":
+        uid = str(current_user["_id"])
+        staff = await db["staff_accounts"].find_one({"userId": uid})
+        if staff and staff.get("dealerId"):
+            did = staff["dealerId"]
+            try:
+                if isinstance(did, ObjectId):
+                    dealer = await db["dealer_organizations"].find_one({"_id": did})
+                elif ObjectId.is_valid(str(did)):
+                    dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(str(did))})
+                else:
+                    dealer = await db["dealer_organizations"].find_one({"dealerId": str(did)})
+                if dealer:
+                    return serialize_doc(dealer)
+            except Exception:
+                pass
+
+    # Strategy 3: Dealer admin  look up by userId
+    dealer = await db["dealer_organizations"].find_one({"userId": user_id})
+    if dealer:
+        return serialize_doc(dealer)
+
+    # Strategy 4: Try current_user["_id"] as userId string (handles different ID formats)
+    if current_user:
+        dealer = await db["dealer_organizations"].find_one({"userId": str(current_user.get("_id", ""))})
         if dealer:
             return serialize_doc(dealer)
 
-    dealer = await db["dealer_organizations"].find_one({"userId": user_id})
-    if not dealer:
-        raise HTTPException(status_code=404, detail="Dealer profile not found")
-    return serialize_doc(dealer)
+    raise HTTPException(status_code=404, detail="Dealer profile not found")
 
 
 async def approve_dealer(dealer_id: str, admin_id: str) -> dict:

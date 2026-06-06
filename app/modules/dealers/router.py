@@ -92,16 +92,11 @@ async def setup_dealer(
 async def get_my_dealer(current_user: dict = Depends(get_current_dealer_or_staff)):
     """
     Returns the dealer profile for the current user.
-    Works for both pending and approved dealers so the layout can check status.
+    Works for both dealer admin and staff (returns their employer's dealer profile).
     """
-    if current_user.get("role") != "DEALER_ADMIN":
-        raise HTTPException(status_code=403, detail="Dealer access required")
-    db = get_db()
-    uid = str(current_user["_id"])
-    dealer = await db["dealer_organizations"].find_one({"userId": uid})
-    if not dealer:
-        raise HTTPException(status_code=404, detail="No dealer profile found")
-    return serialize_doc(dealer)
+    from app.modules.dealers.service import get_dealer_by_user_id
+    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
+    return dealer
 
 
 @router.patch("/me")

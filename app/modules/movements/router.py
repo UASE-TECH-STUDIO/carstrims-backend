@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, Body
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from app.auth.dependencies import get_current_dealer, get_current_dealer_or_staff, get_current_user
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
