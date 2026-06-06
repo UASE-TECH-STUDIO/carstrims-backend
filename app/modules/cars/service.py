@@ -14,13 +14,19 @@ def generate_car_id():
 
 async def create_car(dealer_id: str, user_id: str, data: dict) -> dict:
     db = get_db()
+    from bson import ObjectId as _OID
 
-    dealer = await db["dealer_organizations"].find_one({"userId": user_id})
+    # Look up dealer by the dealer_id passed in (works for both dealer admin and staff)
+    dealer = None
+    if _OID.is_valid(str(dealer_id)):
+        dealer = await db["dealer_organizations"].find_one({"_id": _OID(str(dealer_id))})
+    if not dealer:
+        dealer = await db["dealer_organizations"].find_one({"dealerId": str(dealer_id)})
+    if not dealer:
+        # Final fallback: try by userId (only works for dealer admin)
+        dealer = await db["dealer_organizations"].find_one({"userId": user_id})
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer profile not found")
-
-    if str(dealer["_id"]) != dealer_id and dealer.get("dealerId") != dealer_id:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     purchase_price = data.get("purchasePrice", 0)
     selling_price = data.get("sellingPrice", 0)
