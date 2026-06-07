@@ -1,6 +1,7 @@
 """
-CARSTRIMS Web Push Notification Service
-Uses pywebpush with VAPID keys for push to any device/browser.
+CARSTRIMS Push Notification Service
+- Web Push (VAPID/pywebpush) for web browsers
+- Firebase FCM V1 API for Android/iOS apps (Service Account auth)
 """
 import json
 import asyncio
@@ -9,15 +10,17 @@ from app.database.connection import get_db
 from app.config.settings import settings
 
 
+#  WEB PUSH (VAPID) 
+
 def _send_push_sync(subscription_info: dict, payload: str, vapid_private_key: str, vapid_claims: dict):
-    """Synchronous pywebpush call - runs in thread pool to avoid blocking event loop."""
+    """Synchronous pywebpush call - runs in thread pool."""
     from pywebpush import webpush, WebPushException
     webpush(
         subscription_info=subscription_info,
         data=payload,
         vapid_private_key=vapid_private_key,
         vapid_claims=vapid_claims,
-        ttl=86400,  # 24 hours
+        ttl=86400,
     )
 
 
@@ -27,25 +30,19 @@ async def send_web_push_to_user(
     body: str,
     url: str = "/dashboard",
     icon: str = "/icon-192.png",
-):
-    """Send Web Push notification to ALL subscribed devices for a user."""
+) -> int:
+    """Send Web Push (VAPID) to all subscribed browsers for a user."""
     if not user_id:
         return 0
 
     vapid_private = getattr(settings, "VAPID_PRIVATE_KEY", "").strip()
     if not vapid_private:
-        print("[WebPush] VAPID_PRIVATE_KEY not set - cannot send push notifications")
         return 0
 
     db = get_db()
     subs = await db["push_subscriptions"].find({"userId": user_id}).to_list(20)
     if not subs:
         return 0
-
-    vapid_claims = {
-        "sub": "mailto:support@carstrims.com",
-        "aud": "",  # will be set per subscription
-    }
 
     payload = json.dumps({
         "title":   title,
@@ -55,152 +52,126 @@ async def send_web_push_to_user(
         "icon":    icon,
         "badge":   "/icon-72.png",
         "sound":   True,
-        "tag":     f"carstrims-{user_id}-{title[:10]}",
+        "tag":     f"carstrims-{user_id[:8]}-{title[:10]}",
         "vibrate": [200, 100, 200],
-        "requireInteraction": False,
     })
 
     sent = 0
     loop = asyncio.get_event_loop()
-
-    for sub_doc in subs:
-        sub_info = sub_doc.get("subscription", sub_doc)
-
-        # Make sure it has required fields
-        endpoint  = sub_info.get("endpoint", "")
-        keys      = sub_info.get("keys", {})
-        if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
-            print(f"[WebPush] Invalid subscription for user {user_id}")
-            continue
-
-        # Build clean subscription info
-        clean_sub = {
-            "endpoint": endpoint,
-            "keys": {
-                "p256dh": keys.get("p256dh"),
-                "auth":   keys.get("auth"),
-            },
-        }
-
-        # Audience must match subscription endpoint origin
+    for sub in subs:
         try:
-            from urllib.parse import urlparse
-            parsed   = urlparse(endpoint)
-            audience = f"{parsed.scheme}://{parsed.netloc}"
-            claims   = {"sub": "mailto:support@carstrims.com", "aud": audience}
-        except Exception:
-            claims = {"sub": "mailto:support@carstrims.com"}
+            sub_info = sub.get("subscription") or sub
+            endpoint = sub_info.get("endpoint", "")
+            if not endpoint:
+                continue
 
-        try:
-            # Run synchronous webpush in a thread pool
+            aud = "/".join(endpoint.split("/")[:3])
+            claims = {"sub": "mailto:support@carstrims.com", "aud": aud}
+
             await loop.run_in_executor(
-                None,
-                _send_push_sync,
-                clean_sub,
-                payload,
-                vapid_private,
-                claims,
+                None, _send_push_sync, sub_info, payload, vapid_private, claims
             )
             sent += 1
-            print(f"[WebPush] Sent to user {user_id} at {endpoint[:50]}...")
         except Exception as e:
-            err_str = str(e)
-            print(f"[WebPush] Error for user {user_id}: {err_str[:200]}")
-            # Remove expired/invalid subscriptions
-            if "410" in err_str or "404" in err_str:
-                await db["push_subscriptions"].delete_one({"_id": sub_doc["_id"]})
-                print(f"[WebPush] Removed expired subscription for user {user_id}")
-
-    print(f"[WebPush] Sent {sent}/{len(subs)} push(es) to user {user_id} - '{title}'")
+            err = str(e)
+            if "410" in err or "404" in err or "unsubscribed" in err.lower():
+                await db["push_subscriptions"].delete_one({"_id": sub["_id"]})
     return sent
 
 
-async def send_push_notification(
-    receiver_id: str,
-    title: str,
-    message: str,
-    url: str = "/dashboard",
-    save_to_db: bool = True,
-):
-    """Save notification to DB and fire Web Push."""
-    if not receiver_id:
-        return 0
+#  FCM V1 API (Android / iOS app) 
 
-    db = get_db()
-    if save_to_db:
-        await db["notifications"].insert_one({
-            "receiverId": receiver_id,
-            "type":       "general",
-            "title":      title,
-            "message":    message,
-            "isRead":     False,
-            "data":       {"url": url},
-            "createdAt":  datetime.utcnow(),
-        })
+async def _get_fcm_access_token() -> str:
+    """Get short-lived OAuth2 token from Firebase Service Account JSON."""
+    sa_json = getattr(settings, "FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    if not sa_json:
+        return ""
+    try:
+        import json as _json
+        from google.oauth2 import service_account
+        from google.auth.transport.requests import Request as _GReq
 
-    return await send_web_push_to_user(receiver_id, title, message, url)
+        creds_dict = _json.loads(sa_json)
+        scopes = ["https://www.googleapis.com/auth/firebase.messaging"]
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        creds.refresh(_GReq())
+        return creds.token or ""
+    except Exception as e:
+        print(f"[FCM] Failed to get access token: {e}")
+        return ""
+
 
 async def send_fcm_push_to_user(
     user_id: str,
     title: str,
     body: str,
     url: str = "/dashboard",
-    icon: str = "/icon-192.png",
 ) -> int:
-    """Send Firebase FCM push to all registered Android/iOS devices for a user."""
-    from app.config.settings import settings
-    firebase_key = getattr(settings, "FIREBASE_SERVER_KEY", "").strip()
-    if not firebase_key:
+    """Send FCM V1 push to all registered Android/iOS devices for a user."""
+    project_id = getattr(settings, "FIREBASE_PROJECT_ID", "").strip()
+    if not project_id:
+        return 0
+
+    token = await _get_fcm_access_token()
+    if not token:
         return 0
 
     db = get_db()
-    tokens_docs = await db["device_tokens"].find({"userId": user_id}).to_list(20)
-    if not tokens_docs:
+    devices = await db["device_tokens"].find({"userId": user_id}).to_list(20)
+    if not devices:
         return 0
 
-    sent = 0
     import httpx
-    for doc in tokens_docs:
-        token = doc.get("token", "")
-        if not token:
+    sent = 0
+    fcm_url = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
+
+    for dev in devices:
+        fcm_token = dev.get("token", "")
+        if not fcm_token:
             continue
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(
-                    "https://fcm.googleapis.com/fcm/send",
+                    fcm_url,
                     headers={
-                        "Authorization": f"key={firebase_key}",
+                        "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
                     },
                     json={
-                        "to": token,
-                        "priority": "high",
-                        "notification": {
-                            "title": title,
-                            "body": body,
-                            "icon": "ic_launcher",
-                            "color": "#F47B20",
-                            "sound": "default",
-                            "click_action": "FLUTTER_NOTIFICATION_CLICK",
-                        },
-                        "data": {
-                            "url": url,
-                            "title": title,
-                            "body": body,
-                        },
+                        "message": {
+                            "token": fcm_token,
+                            "notification": {
+                                "title": title,
+                                "body": body,
+                            },
+                            "android": {
+                                "priority": "high",
+                                "notification": {
+                                    "icon": "ic_launcher",
+                                    "color": "#F47B20",
+                                    "sound": "default",
+                                    "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                                },
+                            },
+                            "data": {
+                                "url": url,
+                                "title": title,
+                                "body": body,
+                            },
+                        }
                     },
                 )
                 if resp.status_code == 200:
-                    result = resp.json()
-                    if result.get("success", 0) > 0:
-                        sent += 1
-                    elif result.get("failure", 0) > 0:
-                        # Token expired or invalid - remove it
-                        error = (result.get("results") or [{}])[0].get("error", "")
-                        if error in ("NotRegistered", "InvalidRegistration"):
-                            await db["device_tokens"].delete_one({"_id": doc["_id"]})
+                    sent += 1
+                elif resp.status_code in (400, 404):
+                    # Invalid/expired token - remove it
+                    err = resp.json()
+                    if "UNREGISTERED" in str(err) or "INVALID_ARGUMENT" in str(err):
+                        await db["device_tokens"].delete_one({"_id": dev["_id"]})
+                else:
+                    print(f"[FCM] Error {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
-            print(f"[FCM] Send error for token {token[:20]}...: {e}")
+            print(f"[FCM] Send error: {e}")
 
     return sent
 
@@ -212,19 +183,10 @@ async def send_push_to_user(
     url: str = "/dashboard",
     icon: str = "/icon-192.png",
 ) -> int:
-    """
-    Send push notification to a user via BOTH web push (VAPID) and FCM (Android app).
-    Returns total successful sends.
-    """
-    import asyncio
+    """Send push to a user via BOTH web push AND FCM app push simultaneously."""
     results = await asyncio.gather(
         send_web_push_to_user(user_id, title, body, url, icon),
-        send_fcm_push_to_user(user_id, title, body, url, icon),
+        send_fcm_push_to_user(user_id, title, body, url),
         return_exceptions=True,
     )
-    total = 0
-    for r in results:
-        if isinstance(r, int):
-            total += r
-    return total
-
+    return sum(r for r in results if isinstance(r, int))
