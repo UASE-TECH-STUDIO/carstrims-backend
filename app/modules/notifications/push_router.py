@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body
 from app.auth.dependencies import get_current_user
 from app.database.connection import get_db
 from datetime import datetime
@@ -51,7 +51,7 @@ async def send_test_push(current_user: dict = Depends(get_current_user)):
     """Send a test push notification to the current user."""
     from app.modules.notifications.push_service import send_push_notification
     uid = str(current_user["_id"])
-    await send_push_notification(uid, "CARSTRIMS Test 🚗", "Push notifications are working!", "/dashboard", save_to_db=False)
+    await send_push_notification(uid, "CARSTRIMS Test ", "Push notifications are working!", "/dashboard", save_to_db=False)
     return {"message": "Test push sent"}
 
 
@@ -73,3 +73,30 @@ async def send_push_to_user(
         data.get("url", "/"),
     )
     return {"sent": sent}
+
+@router.post("/register-device")
+async def register_device(
+    data: dict = Body({}),
+    current_user: dict = Depends(get_current_user),
+):
+    """Register mobile FCM device token for Android/iOS push notifications."""
+    db = get_db()
+    uid = str(current_user["_id"])
+    token = data.get("token", "").strip()
+    platform = data.get("platform", "android")
+
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required")
+
+    await db["device_tokens"].update_one(
+        {"userId": uid, "token": token},
+        {"$set": {
+            "userId": uid,
+            "token": token,
+            "platform": platform,
+            "updatedAt": datetime.utcnow(),
+        }},
+        upsert=True,
+    )
+    return {"message": "Device registered for push notifications"}
+

@@ -98,7 +98,14 @@ async def public_car_feed(
     approved_dealers = await db["dealer_organizations"].find(
         {"status": "approved"}, {"_id": 1}
     ).to_list(10000)
-    approved_ids = [str(d["_id"]) for d in approved_dealers]
+    # Include both string and ObjectId formats to catch all stored formats
+    from bson import ObjectId as _OID
+    approved_ids = []
+    for d in approved_dealers:
+        str_id = str(d["_id"])
+        approved_ids.append(str_id)
+        if _OID.is_valid(str_id):
+            approved_ids.append(_OID(str_id))
     query["dealerId"] = {"$in": approved_ids}
 
     total = await db["car_listings"].count_documents(query)
