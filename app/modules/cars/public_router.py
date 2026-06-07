@@ -126,7 +126,12 @@ async def public_car_feed(
             }},
             {"$addFields": {
                 "feedScore": {"$add": [
-                    {"$multiply": [100, {"$exp": {"$multiply": [-0.008, "$ageHours"]}}]},
+                    # Very new cars (< 2 hours) get massive boost so they always appear
+                    {"$cond": {
+                        "if": {"$lte": ["$ageHours", 2]},
+                        "then": 10000,
+                        "else": {"$multiply": [100, {"$exp": {"$multiply": [-0.008, "$ageHours"]}}]}
+                    }},
                     {"$multiply": [{"$ifNull": ["$viewCount", 0]}, 0.3]},
                     {"$multiply": [{"$ifNull": ["$likeCount", 0]}, 2.0]},
                     {"$multiply": [{"$rand": {}}, 15]}
