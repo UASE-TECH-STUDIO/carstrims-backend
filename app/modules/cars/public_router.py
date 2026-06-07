@@ -96,10 +96,21 @@ async def public_car_feed(
 
     # Only show cars from approved dealers in the public feed
     approved_dealers = await db["dealer_organizations"].find(
-        {"status": "approved"}, {"_id": 1}
+        {"status": "approved"}, {"_id": 1, "dealerId": 1}
     ).to_list(10000)
-    approved_ids = [str(d["_id"]) for d in approved_dealers]
-    query["dealerId"] = {"$in": approved_ids}
+    # Include ALL possible dealerId formats stored in car_listings
+    approved_ids = []
+    for d in approved_dealers:
+        str_id = str(d["_id"])          # hex string "685bdc..."
+        approved_ids.append(str_id)
+        try:
+            approved_ids.append(ObjectId(str_id))  # ObjectId object
+        except Exception:
+            pass
+        if d.get("dealerId"):           # DLR-xxx format
+            approved_ids.append(d["dealerId"])
+    if approved_ids:
+        query["dealerId"] = {"$in": approved_ids}
 
     total = await db["car_listings"].count_documents(query)
 
@@ -390,6 +401,47 @@ async def remove_comment(
     current_user: dict = Depends(get_current_user),
 ):
     return await delete_comment(comment_id, str(current_user["_id"]))
+
+
+
+@router.get("/debug-feed")
+async def debug_feed():
+    """Debug: show exactly what dealers and cars the feed returns."""
+    db = get_db()
+    approved = await db["dealer_organizations"].find(
+        {"status": "approved"}, {"_id": 1, "dealerId": 1, "companyName": 1}
+    ).to_list(50)
+
+    result = []
+    for d in approved:
+        str_id = str(d["_id"])
+        # Count cars with string id
+        cars_str = await db["car_listings"].count_documents(
+            {"dealerId": str_id, "status": "available"}
+        )
+        # Count cars with ObjectId
+        cars_oid = await db["car_listings"].count_documents(
+            {"dealerId": ObjectId(str_id), "status": "available"}
+        ) if ObjectId.is_valid(str_id) else 0
+        # Get sample
+        sample = await db["car_listings"].find(
+            {"status": "available"},
+            {"carId": 1, "brand": 1, "dealerId": 1}
+        ).limit(3).to_list(3)
+
+        result.append({
+            "company": d.get("companyName"),
+            "mongo_id": str_id,
+            "dealerId_field": d.get("dealerId"),
+            "cars_matching_string_id": cars_str,
+            "cars_matching_objectid": cars_oid,
+            "sample_cars_in_db": [
+                {"carId": c.get("carId"), "dealerId": str(c.get("dealerId"))}
+                for c in sample
+            ],
+        })
+
+    return {"approved_dealers": result, "total_approved": len(result)}
 
 
 @router.post("/cars/{car_id}/comments/{comment_id}/reply")
