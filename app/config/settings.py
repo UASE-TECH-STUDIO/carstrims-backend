@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     TWILIO_WA_FROM: str = os.getenv("TWILIO_WA_FROM", "whatsapp:+14155238886")
     TWILIO_WA_JOIN: str = os.getenv("TWILIO_WA_JOIN", "join ants-whistle")
 
+    # Firebase FCM (Android push notifications)
+    FIREBASE_SERVER_KEY: str = os.getenv("FIREBASE_SERVER_KEY", "")
+
     # App
     APP_NAME: str = "CARSTRIMS"
     DEBUG: bool = False

@@ -139,3 +139,92 @@ async def send_push_notification(
         })
 
     return await send_web_push_to_user(receiver_id, title, message, url)
+
+async def send_fcm_push_to_user(
+    user_id: str,
+    title: str,
+    body: str,
+    url: str = "/dashboard",
+    icon: str = "/icon-192.png",
+) -> int:
+    """Send Firebase FCM push to all registered Android/iOS devices for a user."""
+    from app.config.settings import settings
+    firebase_key = getattr(settings, "FIREBASE_SERVER_KEY", "").strip()
+    if not firebase_key:
+        return 0
+
+    db = get_db()
+    tokens_docs = await db["device_tokens"].find({"userId": user_id}).to_list(20)
+    if not tokens_docs:
+        return 0
+
+    sent = 0
+    import httpx
+    for doc in tokens_docs:
+        token = doc.get("token", "")
+        if not token:
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    "https://fcm.googleapis.com/fcm/send",
+                    headers={
+                        "Authorization": f"key={firebase_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "to": token,
+                        "priority": "high",
+                        "notification": {
+                            "title": title,
+                            "body": body,
+                            "icon": "ic_launcher",
+                            "color": "#F47B20",
+                            "sound": "default",
+                            "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                        },
+                        "data": {
+                            "url": url,
+                            "title": title,
+                            "body": body,
+                        },
+                    },
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get("success", 0) > 0:
+                        sent += 1
+                    elif result.get("failure", 0) > 0:
+                        # Token expired or invalid - remove it
+                        error = (result.get("results") or [{}])[0].get("error", "")
+                        if error in ("NotRegistered", "InvalidRegistration"):
+                            await db["device_tokens"].delete_one({"_id": doc["_id"]})
+        except Exception as e:
+            print(f"[FCM] Send error for token {token[:20]}...: {e}")
+
+    return sent
+
+
+async def send_push_to_user(
+    user_id: str,
+    title: str,
+    body: str,
+    url: str = "/dashboard",
+    icon: str = "/icon-192.png",
+) -> int:
+    """
+    Send push notification to a user via BOTH web push (VAPID) and FCM (Android app).
+    Returns total successful sends.
+    """
+    import asyncio
+    results = await asyncio.gather(
+        send_web_push_to_user(user_id, title, body, url, icon),
+        send_fcm_push_to_user(user_id, title, body, url, icon),
+        return_exceptions=True,
+    )
+    total = 0
+    for r in results:
+        if isinstance(r, int):
+            total += r
+    return total
+
