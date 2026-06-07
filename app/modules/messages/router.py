@@ -75,6 +75,89 @@ async def list_conversations(current_user: dict = Depends(get_current_user)):
     return result
 
 
+
+@router.get("/dealer-conversations")
+async def get_dealer_conversations(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Returns the DEALER's conversations for staff to view and manage.
+    Staff can help the dealer by viewing and responding to their messages.
+    Messages sent from here appear to come from the dealer, not the staff.
+    """
+    db = get_db()
+    role = current_user.get("role")
+    if role != "DEALER_STAFF":
+        # For dealer admin, just return their own conversations
+        return await list_conversations.__wrapped__(current_user) if hasattr(list_conversations, '__wrapped__') else []
+
+    # Get staff account to find dealer
+    uid = str(current_user["_id"])
+    staff = await db["staff_accounts"].find_one({"userId": uid})
+    if not staff:
+        return []
+
+    # Find dealer
+    from bson import ObjectId as _OID
+    did = staff.get("dealerId")
+    dealer = None
+    if isinstance(did, _OID):
+        dealer = await db["dealer_organizations"].find_one({"_id": did})
+    elif did and _OID.is_valid(str(did)):
+        dealer = await db["dealer_organizations"].find_one({"_id": _OID(str(did))})
+    if not dealer:
+        return []
+
+    # Get dealer user account
+    dealer_user = None
+    if dealer.get("userId"):
+        if _OID.is_valid(str(dealer["userId"])):
+            dealer_user = await db["users"].find_one({"_id": _OID(str(dealer["userId"]))})
+        if not dealer_user:
+            dealer_user = await db["users"].find_one({"userId": str(dealer["userId"])})
+    if not dealer_user:
+        return []
+
+    dealer_uid = str(dealer_user["_id"])
+
+    # Fetch dealer's conversations
+    convs = await db["conversations"].find(
+        {"participants": dealer_uid}
+    ).sort("lastMessageAt", -1).limit(50).to_list(50)
+
+    result = []
+    for conv in convs:
+        # Get the other participant (not the dealer)
+        other_uid = next((p for p in conv.get("participants", []) if p != dealer_uid), None)
+        other_user = None
+        if other_uid:
+            if _OID.is_valid(other_uid):
+                other_user = await db["users"].find_one({"_id": _OID(other_uid)})
+            if not other_user:
+                other_user = await db["users"].find_one({"userId": other_uid})
+
+        # Get last message
+        last_msg = await db["messages"].find_one(
+            {"conversationId": conv.get("conversationId")},
+            sort=[("createdAt", -1)]
+        )
+
+        unread = await db["messages"].count_documents({
+            "conversationId": conv.get("conversationId"),
+            "senderId": {"$ne": dealer_uid},
+            "isRead": False,
+        })
+
+        c = serialize_doc(conv)
+        c["otherUser"] = serialize_doc(other_user) if other_user else {}
+        c["lastMessage"] = serialize_doc(last_msg) if last_msg else {}
+        c["unreadCount"] = unread
+        c["dealerUserId"] = dealer_uid  # so staff knows to send as dealer
+        result.append(c)
+
+    return result
+
+
 @router.post("/start")
 async def start_conversation(
     data: ConversationStart,

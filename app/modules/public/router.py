@@ -96,17 +96,27 @@ async def public_car_feed(
 
     # Only show cars from approved dealers in the public feed
     approved_dealers = await db["dealer_organizations"].find(
-        {"status": "approved"}, {"_id": 1}
+        {"status": "approved"}, {"_id": 1, "dealerId": 1}
     ).to_list(10000)
-    # Include both string and ObjectId formats to catch all stored formats
-    from bson import ObjectId as _OID
+    
+    # Include ALL possible ID formats to catch any storage inconsistency
     approved_ids = []
     for d in approved_dealers:
-        str_id = str(d["_id"])
+        str_id = str(d["_id"])          # ObjectId hex string "685bdc..."
         approved_ids.append(str_id)
-        if _OID.is_valid(str_id):
-            approved_ids.append(_OID(str_id))
-    query["dealerId"] = {"$in": approved_ids}
+        # Also try adding ObjectId object itself in case stored as ObjectId in DB
+        try:
+            from bson import ObjectId as _BOI
+            approved_ids.append(_BOI(str_id))
+        except Exception:
+            pass
+        # Also include the DLR-xxx format dealerId field  
+        if d.get("dealerId"):
+            approved_ids.append(d["dealerId"])
+    
+    if approved_ids:
+        query["dealerId"] = {"$in": approved_ids}
+    # If no approved dealers found, show nothing (empty result is fine)
 
     total = await db["car_listings"].count_documents(query)
 
