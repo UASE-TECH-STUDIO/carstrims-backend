@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body, Request
 from typing import Optional
 from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
@@ -407,6 +407,35 @@ async def remove_comment(
     current_user: dict = Depends(get_current_user),
 ):
     return await delete_comment(comment_id, str(current_user["_id"]))
+
+
+
+@router.get("/debug-feed")
+async def debug_feed(request: Request):
+    """Debug: show exactly what dealers and cars are in the feed."""
+    db = get_db()
+    approved = await db["dealer_organizations"].find(
+        {"status": "approved"}, {"_id": 1, "dealerId": 1, "companyName": 1, "userId": 1}
+    ).to_list(50)
+    
+    result = []
+    for d in approved:
+        str_id = str(d["_id"])
+        cars = await db["car_listings"].find(
+            {"dealerId": str_id, "status": "available"},
+            {"carId": 1, "brand": 1, "model": 1, "dealerId": 1}
+        ).limit(5).to_list(5)
+        
+        result.append({
+            "companyName": d.get("companyName"),
+            "mongo_id": str_id,
+            "dealerId_field": d.get("dealerId"),
+            "userId": str(d.get("userId")),
+            "cars_with_str_id": len(cars),
+            "sample_cars": [{"carId": c.get("carId"), "dealerId_stored": str(c.get("dealerId"))} for c in cars],
+        })
+    
+    return {"approved_dealers": result, "total": len(result)}
 
 
 @router.post("/cars/{car_id}/comments/{comment_id}/reply")
