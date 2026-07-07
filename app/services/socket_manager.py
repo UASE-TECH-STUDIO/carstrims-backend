@@ -4,7 +4,7 @@ Handles real-time: notifications, chat, car feed updates
 Replaces the separate Node.js socket-server
 """
 import socketio
-import jwt
+from jose import jwt
 import logging
 from app.config.settings import settings
 
@@ -212,3 +212,4 @@ def get_connection_count() -> int:
 
 def get_connected_users() -> dict:
     return connected_users
+
