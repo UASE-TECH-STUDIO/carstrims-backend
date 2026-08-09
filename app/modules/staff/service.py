@@ -19,15 +19,37 @@ async def create_staff(dealer_id: str, data: dict) -> dict:
     if existing_email:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    existing_username = await db["users"].find_one({"username": data.get("username")})
-    if existing_username:
-        raise HTTPException(status_code=400, detail="Username already taken")
+    # BUG FIX: the schema documented "username: auto-generated if not
+    # provided" but that generation was never implemented — every staff
+    # account was being stored with username=None, so the very next
+    # staff account created ANYWHERE on the platform would collide with
+    # that None value and fail with a confusing "Username already taken"
+    # error (confusing because staff are never asked to enter a username
+    # at all). This generates a real, unique username as the schema
+    # always intended.
+    username = data.get("username")
+    if not username:
+        base = "".join(c for c in (data.get("fullName") or "staff").lower() if c.isalnum()) or "staff"
+        base = base[:20]
+        username = base
+        attempt = 0
+        while await db["users"].find_one({"username": username}):
+            attempt += 1
+            suffix = "".join(random.choices(string.digits, k=4))
+            username = f"{base}{suffix}"
+            if attempt > 20:  # extremely unlikely, but never loop forever
+                username = f"{base}{generate_staff_id()[-6:]}"
+                break
+    else:
+        existing_username = await db["users"].find_one({"username": username})
+        if existing_username:
+            raise HTTPException(status_code=400, detail="Username already taken")
 
     password = data.get("password", "Staff@1234")
 
     user_doc = {
         "fullName": data.get("fullName"),
-        "username": data.get("username"),
+        "username": username,
         "email": data.get("email"),
         "phone": data.get("phone"),
         "whatsapp": data.get("whatsapp"),

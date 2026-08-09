@@ -159,7 +159,7 @@ async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(ge
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="No permission to create staff")
 
-    existing = await db["users"].find_one({"email": data.email})
+    existing = await db["users"].find_one({"email": data.email.strip().lower()})
     if existing:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -167,12 +167,13 @@ async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(ge
     temp_password = data.password or "Staff@" + "".join(random.choices(string.digits, k=6))
 
     # Auto-generate username from email if not provided
-    auto_username = data.username or data.email.split("@")[0]
+    normalized_email = data.email.strip().lower()
+    auto_username = data.username or normalized_email.split("@")[0]
 
     user_doc = {
         "fullName": data.fullName,
         "username": auto_username,
-        "email": data.email,
+        "email": normalized_email,
         "passwordHash": hash_password(temp_password),
         "phone": data.phone,
         "whatsapp": data.whatsapp,
@@ -191,7 +192,7 @@ async def create_staff(data: StaffCreateRequest, current_user: dict = Depends(ge
         "userId": str(user_result.inserted_id),
         "dealerId": dealer["_id"],
         "fullName": data.fullName,
-        "email": data.email,
+        "email": normalized_email,
         "phone": data.phone,
         "whatsapp": data.whatsapp,
         "address": data.address,
