@@ -40,6 +40,69 @@ def gen_conv_id():
     return "CONV-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 
+async def resolve_effective_sender(db, current_user: dict, conv_id: str) -> dict:
+    """
+    Figures out who a message should be attributed to.
+
+    For DEALER_ADMIN (and everyone else): the message is simply from them.
+
+    For DEALER_STAFF: if the conversation they're replying in actually
+    belongs to their dealer (i.e. they're helping manage the dealer's own
+    conversation, the "sync" feature), the message is stored as coming
+    from the DEALER (so the conversation's participants list — and
+    anyone external like a customer — stays consistent, and the dealer
+    always sees their own team's replies as "their side" of the chat).
+    The staff member's own id/name is additionally recorded so the
+    dealer (or other staff) can see who on the team actually typed it,
+    without that identity leaking to the external participant.
+
+    If the staff member is instead in a normal, direct conversation of
+    their own (not the synced dealer inbox), they're just themselves —
+    no substitution happens.
+    """
+    uid = str(current_user["_id"])
+    result = {"senderId": uid, "sentByStaffId": None, "sentByStaffName": None}
+
+    if current_user.get("role") != "DEALER_STAFF":
+        return result
+
+    staff = await db["staff_accounts"].find_one({"userId": uid})
+    if not staff:
+        return result
+
+    did = staff.get("dealerId")
+    dealer = None
+    if isinstance(did, ObjectId):
+        dealer = await db["dealer_organizations"].find_one({"_id": did})
+    elif did and ObjectId.is_valid(str(did)):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(str(did))})
+    if not dealer or not dealer.get("userId"):
+        return result
+
+    dealer_user = None
+    if ObjectId.is_valid(str(dealer["userId"])):
+        dealer_user = await db["users"].find_one({"_id": ObjectId(str(dealer["userId"]))})
+    if not dealer_user:
+        dealer_user = await db["users"].find_one({"userId": str(dealer["userId"])})
+    if not dealer_user:
+        return result
+
+    dealer_uid = str(dealer_user["_id"])
+
+    # Only substitute if this conversation genuinely belongs to the dealer
+    # (staff shouldn't be able to impersonate the dealer in conversations
+    # that have nothing to do with them).
+    conv = await db["conversations"].find_one({"conversationId": conv_id})
+    if not conv or dealer_uid not in conv.get("participants", []):
+        return result
+
+    return {
+        "senderId": dealer_uid,
+        "sentByStaffId": uid,
+        "sentByStaffName": current_user.get("fullName"),
+    }
+
+
 router = APIRouter(prefix="/api/v1/messages", tags=["Messages"])
 
 
@@ -302,6 +365,8 @@ async def send_message(
     uid = str(current_user["_id"])
     now = datetime.utcnow()
 
+    sender = await resolve_effective_sender(db, current_user, conv_id)
+
     # Resolve receiver to MongoDB _id if needed
     receiver_id = data.receiverId
     if not ObjectId.is_valid(receiver_id):
@@ -312,7 +377,9 @@ async def send_message(
     msg_doc = {
         "messageId": gen_msg_id(),
         "conversationId": conv_id,
-        "senderId": uid,
+        "senderId": sender["senderId"],
+        "sentByStaffId": sender["sentByStaffId"],
+        "sentByStaffName": sender["sentByStaffName"],
         "receiverId": receiver_id,
         "message": data.message,
         "imageUrl": data.imageUrl,  # photo in chat
@@ -464,6 +531,8 @@ async def send_message_with_attachment(
     uid = str(current_user["_id"])
     now = datetime.utcnow()
 
+    sender = await resolve_effective_sender(db, current_user, conv_id)
+
     receiver_id = receiverId
     if receiver_id and not ObjectId.is_valid(receiver_id):
         recv_user = await db["users"].find_one({"userId": receiver_id})
@@ -473,7 +542,9 @@ async def send_message_with_attachment(
     msg_doc = {
         "messageId": gen_msg_id(),
         "conversationId": conv_id,
-        "senderId": uid,
+        "senderId": sender["senderId"],
+        "sentByStaffId": sender["sentByStaffId"],
+        "sentByStaffName": sender["sentByStaffName"],
         "receiverId": receiver_id,
         "message": message or (" Photo" if attachmentType == "image" else " Video" if attachmentType == "video" else " Document"),
         "attachmentUrl": attachmentUrl,
