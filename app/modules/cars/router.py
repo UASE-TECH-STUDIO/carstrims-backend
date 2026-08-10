@@ -34,6 +34,14 @@ async def list_cars(
 
 @router.get("/{car_id}")
 async def get_car(car_id: str, current_user: dict = Depends(get_current_dealer_or_staff)):
+    # SYSTEM_ADMIN has no dealer record of their own — the old code always
+    # called get_dealer_by_user_id() first, which fails for admins since
+    # they aren't a dealer, causing "Car not found" for every single car
+    # an admin tried to view. Admins should be able to view ANY car, so
+    # skip dealer-scoping entirely for them (get_car_by_id already
+    # supports an unscoped lookup via dealer_id=None).
+    if current_user.get("role") == "SYSTEM_ADMIN":
+        return await get_car_by_id(car_id)
     dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     return await get_car_by_id(car_id, dealer["_id"])
 
