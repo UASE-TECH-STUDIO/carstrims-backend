@@ -90,13 +90,22 @@ async def remove_car(
     reason: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_dealer_or_staff),
 ):
-    dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
     db = get_db()
+    is_admin = current_user.get("role") == "SYSTEM_ADMIN"
 
-    if ObjectId.is_valid(car_id):
-        query = {"_id": ObjectId(car_id), "dealerId": dealer["_id"]}
+    # Same issue as GET /{car_id}: SYSTEM_ADMIN has no dealer record of
+    # their own, so calling get_dealer_by_user_id() first would fail
+    # before an admin could ever delete/moderate any car. Admins can
+    # delete ANY car; dealers/staff can only delete their own.
+    if is_admin:
+        dealer = None
+        query = {"_id": ObjectId(car_id)} if ObjectId.is_valid(car_id) else {"carId": car_id}
     else:
-        query = {"carId": car_id, "dealerId": dealer["_id"]}
+        dealer = await get_dealer_by_user_id(str(current_user["_id"]), current_user)
+        if ObjectId.is_valid(car_id):
+            query = {"_id": ObjectId(car_id), "dealerId": dealer["_id"]}
+        else:
+            query = {"carId": car_id, "dealerId": dealer["_id"]}
 
     car = await db["car_listings"].find_one(query)
     if not car:
@@ -107,9 +116,9 @@ async def remove_car(
         "type": "car",
         "itemId": car.get("carId"),
         "itemData": serialize_doc(car),
-        "reason": reason or "No reason provided",
+        "reason": reason or ("Removed by admin" if is_admin else "No reason provided"),
         "deletedBy": str(current_user["_id"]),
-        "dealerId": dealer["_id"],
+        "dealerId": (dealer["_id"] if dealer else car.get("dealerId")),
         "deletedAt": datetime.utcnow(),
     })
 
