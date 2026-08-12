@@ -200,6 +200,65 @@ async def public_car_detail(car_id: str):
     return serialized
 
 
+@router.get("/search")
+async def universal_search(
+    q: str = Query(..., min_length=1),
+    types: Optional[str] = Query(None, description="Comma-separated: cars,dealers,users. Default: all."),
+    limit: int = Query(8, le=30),
+):
+    """
+    One search box, everything on the platform: cars (by brand, model,
+    year, color, or car ID), dealers (by company/owner name or city),
+    and users (by name or username — covers regular users, partners,
+    and buyers, since they're all in the same users collection).
+    Returns a small number of results per category, meant for a quick
+    "search everything" overview rather than deep pagination.
+    """
+    db = get_db()
+    want = set((types.split(",") if types else ["cars", "dealers", "users"]))
+    results: dict = {}
+
+    if "cars" in want:
+        car_or = [
+            {"brand": {"$regex": q, "$options": "i"}},
+            {"model": {"$regex": q, "$options": "i"}},
+            {"color": {"$regex": q, "$options": "i"}},
+            {"carId": {"$regex": q, "$options": "i"}},
+        ]
+        if q.strip().isdigit():
+            car_or.append({"year": int(q.strip())})
+        cars = await db["car_listings"].find(
+            {"$or": car_or, "status": {"$in": ["available", "sold"]}}
+        ).sort("createdAt", -1).limit(limit).to_list(limit)
+        results["cars"] = [serialize_doc(c) for c in cars]
+
+    if "dealers" in want:
+        dealers = await db["dealer_organizations"].find({
+            "status": "approved",
+            "$or": [
+                {"companyName": {"$regex": q, "$options": "i"}},
+                {"ownerName": {"$regex": q, "$options": "i"}},
+                {"city": {"$regex": q, "$options": "i"}},
+            ],
+        }).limit(limit).to_list(limit)
+        results["dealers"] = [serialize_doc(d) for d in dealers]
+
+    if "users" in want:
+        users = await db["users"].find(
+            {
+                "status": {"$ne": "suspended"},
+                "$or": [
+                    {"fullName": {"$regex": q, "$options": "i"}},
+                    {"username": {"$regex": q, "$options": "i"}},
+                ],
+            },
+            {"passwordHash": 0},  # never expose this, even hashed
+        ).limit(limit).to_list(limit)
+        results["users"] = [serialize_doc(u) for u in users]
+
+    return results
+
+
 @router.get("/dealers")
 async def public_dealers(
     search: Optional[str] = Query(None),
