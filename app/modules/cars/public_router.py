@@ -11,6 +11,7 @@ from bson import ObjectId
 from pydantic import BaseModel
 from app.config.settings import settings
 from datetime import datetime
+import time
 
 
 class CommentBody(BaseModel):
@@ -22,6 +23,38 @@ class ReplyBody(BaseModel):
 
 
 router = APIRouter(prefix="/api/v1/public", tags=["Public Feed"])
+
+# Simple short-lived cache: the set of approved dealer IDs barely changes
+# (only when a dealer gets approved/suspended), yet it was being
+# re-fetched — up to 10,000 documents — on EVERY single feed request.
+# A short TTL cache turns that into one fetch per ~60 seconds shared
+# across all users, instead of one fetch per request.
+_approved_dealers_cache: dict = {"ids": None, "at": 0.0}
+_APPROVED_DEALERS_TTL_SECONDS = 60
+
+
+async def get_approved_dealer_ids(db) -> list:
+    now = time.time()
+    if _approved_dealers_cache["ids"] is not None and (now - _approved_dealers_cache["at"]) < _APPROVED_DEALERS_TTL_SECONDS:
+        return _approved_dealers_cache["ids"]
+
+    approved_dealers = await db["dealer_organizations"].find(
+        {"status": "approved"}, {"_id": 1, "dealerId": 1}
+    ).to_list(10000)
+    approved_ids: list = []
+    for d in approved_dealers:
+        str_id = str(d["_id"])
+        approved_ids.append(str_id)
+        try:
+            approved_ids.append(ObjectId(str_id))
+        except Exception:
+            pass
+        if d.get("dealerId"):
+            approved_ids.append(d["dealerId"])
+
+    _approved_dealers_cache["ids"] = approved_ids
+    _approved_dealers_cache["at"] = now
+    return approved_ids
 
 
 #  PUBLIC CAR FEED 
@@ -95,20 +128,7 @@ async def public_car_feed(
         sort_field, sort_dir = "viewCount", -1
 
     # Only show cars from approved dealers in the public feed
-    approved_dealers = await db["dealer_organizations"].find(
-        {"status": "approved"}, {"_id": 1, "dealerId": 1}
-    ).to_list(10000)
-    # Include ALL possible dealerId formats stored in car_listings
-    approved_ids = []
-    for d in approved_dealers:
-        str_id = str(d["_id"])          # hex string "685bdc..."
-        approved_ids.append(str_id)
-        try:
-            approved_ids.append(ObjectId(str_id))  # ObjectId object
-        except Exception:
-            pass
-        if d.get("dealerId"):           # DLR-xxx format
-            approved_ids.append(d["dealerId"])
+    approved_ids = await get_approved_dealer_ids(db)
     if approved_ids:
         query["dealerId"] = {"$in": approved_ids}
 
@@ -145,12 +165,24 @@ async def public_car_feed(
     else:
         cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
 
+    # Batch-fetch dealer info for this page in ONE query instead of one
+    # query per car (was 20 sequential database round-trips per page —
+    # the main cause of the feed feeling slow to load).
+    page_dealer_ids = list({
+        car["dealerId"] for car in cars
+        if ObjectId.is_valid(car.get("dealerId", ""))
+    })
+    dealers_by_id = {}
+    if page_dealer_ids:
+        dealer_docs = await db["dealer_organizations"].find(
+            {"_id": {"$in": [ObjectId(d) for d in page_dealer_ids]}}
+        ).to_list(len(page_dealer_ids))
+        dealers_by_id = {str(d["_id"]): d for d in dealer_docs}
+
     result = []
     for car in cars:
         s = serialize_doc(car)
-        dealer = await db["dealer_organizations"].find_one(
-            {"_id": ObjectId(car["dealerId"])}
-        ) if ObjectId.is_valid(car.get("dealerId", "")) else None
+        dealer = dealers_by_id.get(car.get("dealerId"))
         if dealer:
             s["dealerName"] = dealer.get("companyName")
             s["dealerLogo"] = dealer.get("logo")
