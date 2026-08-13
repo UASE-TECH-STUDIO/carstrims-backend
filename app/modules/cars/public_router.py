@@ -496,7 +496,8 @@ async def remove_comment(
     comment_id: str,
     current_user: dict = Depends(get_current_user),
 ):
-    return await delete_comment(comment_id, str(current_user["_id"]))
+    is_admin = current_user.get("role") == "SYSTEM_ADMIN"
+    return await delete_comment(comment_id, str(current_user["_id"]), is_admin=is_admin)
 
 
 

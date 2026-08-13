@@ -45,12 +45,17 @@ async def get_car_comments(car_id: str, skip: int = 0, limit: int = 20) -> dict:
     }
 
 
-async def delete_comment(comment_id: str, user_id: str) -> dict:
+async def delete_comment(comment_id: str, user_id: str, is_admin: bool = False) -> dict:
     db = get_db()
     comment = await db["car_comments"].find_one({"commentId": comment_id})
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    if comment["userId"] != user_id:
+    # BUG FIX: the car detail page already shows a delete button to
+    # SYSTEM_ADMIN for every comment, but this check rejected anyone
+    # who wasn't the comment's own author — so admins clicking delete
+    # got a silent 403 (swallowed by an empty catch block on the
+    # frontend) and nothing appeared to happen.
+    if not is_admin and comment["userId"] != user_id:
         raise HTTPException(status_code=403, detail="You can only delete your own comments")
     await db["car_comments"].delete_one({"commentId": comment_id})
     return {"message": "Comment deleted"}

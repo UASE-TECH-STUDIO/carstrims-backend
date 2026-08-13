@@ -518,10 +518,73 @@ async def warn_user(user_id: str, data: dict = Body({}), admin=Depends(require_a
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: str, admin=Depends(require_admin)):
+async def delete_user(user_id: str, cascade: bool = Query(False), admin=Depends(require_admin)):
+    """
+    cascade=False (default): soft-deletes just the user account itself
+    (status set to "deleted"), leaving all their content in place.
+
+    cascade=True: also removes everything tied to that account —
+    scoped carefully per role so this never touches anyone else's data:
+      - Any role: their favorites, car likes, follows, comments, car
+        requests, and notifications.
+      - DEALER_ADMIN: their dealer organization record, every car they
+        listed, all expense records and sale transactions under that
+        dealer, and every staff account under that dealer (staff user
+        accounts are soft-deleted, not hard-deleted, so nothing else
+        referencing them breaks).
+      - DEALER_STAFF: their staff_accounts entry.
+    Message/conversation history is intentionally left untouched even
+    with cascade=True, so deleting one person's account doesn't erase
+    the other party's side of a conversation.
+    """
     db = get_db()
+    user = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    removed_counts: dict = {}
+
+    if cascade:
+        uid = str(user["_id"])
+        role = user.get("role")
+
+        r = await db["favorites"].delete_many({"userId": uid}); removed_counts["favorites"] = r.deleted_count
+        r = await db["car_likes"].delete_many({"userId": uid}); removed_counts["car_likes"] = r.deleted_count
+        r = await db["follows"].delete_many({"userId": uid}); removed_counts["follows"] = r.deleted_count
+        r = await db["car_comments"].delete_many({"userId": uid}); removed_counts["comments"] = r.deleted_count
+        r = await db["car_requests"].delete_many({"userId": uid}); removed_counts["car_requests"] = r.deleted_count
+        r = await db["notifications"].delete_many({"receiverId": uid}); removed_counts["notifications"] = r.deleted_count
+
+        if role == "DEALER_ADMIN":
+            dealer = await db["dealer_organizations"].find_one({"userId": uid})
+            if dealer:
+                dealer_id = str(dealer["_id"])
+                r = await db["car_listings"].delete_many({"dealerId": dealer_id}); removed_counts["cars"] = r.deleted_count
+                r = await db["expense_records"].delete_many({"dealerId": dealer_id}); removed_counts["expenses"] = r.deleted_count
+                r = await db["sale_transactions"].delete_many({"dealerId": dealer_id}); removed_counts["sales"] = r.deleted_count
+                staff_docs = await db["staff_accounts"].find({"dealerId": dealer_id}).to_list(1000)
+                for s in staff_docs:
+                    if s.get("userId") and ObjectId.is_valid(s["userId"]):
+                        await db["users"].update_one(
+                            {"_id": ObjectId(s["userId"])},
+                            {"$set": {"status": "deleted", "updatedAt": datetime.utcnow()}},
+                        )
+                r = await db["staff_accounts"].delete_many({"dealerId": dealer_id}); removed_counts["staff_accounts"] = r.deleted_count
+                await db["dealer_organizations"].delete_one({"_id": dealer["_id"]})
+                removed_counts["dealer_organization"] = 1
+
+        elif role == "DEALER_STAFF":
+            r = await db["staff_accounts"].delete_many({"userId": uid}); removed_counts["staff_accounts"] = r.deleted_count
+
+        await db["admin_deletion_logs"].insert_one({
+            "type": "user_cascade", "userId": uid, "userFullName": user.get("fullName"),
+            "userRole": role, "deletedBy": str(admin["_id"]), "deletedAt": datetime.utcnow(),
+            "removedCounts": removed_counts,
+        })
+
     await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": {"status": "deleted", "updatedAt": datetime.utcnow()}})
-    return {"message": "User deleted"}
+    return {"message": "User deleted", "cascade": cascade, "removedCounts": removed_counts}
 
 
 @router.post("/users/{user_id}/reset-password")
@@ -570,7 +633,7 @@ async def admin_delete_car(car_id: str, admin=Depends(require_admin)):
         "deletedAt": datetime.utcnow(), "reason": "Admin moderation",
     })
     await db["car_listings"].delete_one({"_id": car["_id"]})
-    await db["comments"].delete_many({"carId": car.get("carId")})
+    await db["car_comments"].delete_many({"carId": car.get("carId")})
     if car.get("dealerId") and ObjectId.is_valid(car["dealerId"]):
         await db["dealer_organizations"].update_one(
             {"_id": ObjectId(car["dealerId"])}, {"$inc": {"totalCarsListed": -1}}
@@ -589,12 +652,15 @@ async def admin_delete_car(car_id: str, admin=Depends(require_admin)):
 @router.delete("/cars/{car_id}/comments/{comment_id}")
 async def admin_delete_comment(car_id: str, comment_id: str, admin=Depends(require_admin)):
     db = get_db()
-    query = {"_id": ObjectId(comment_id)} if ObjectId.is_valid(comment_id) else {"commentId": comment_id}
-    comment = await db["comments"].find_one(query)
+    # BUG FIX: this was querying db["comments"], a collection that
+    # doesn't actually exist — real comments live in db["car_comments"]
+    # (see app/utils/comments_service.py). This meant admin comment
+    # deletion always 404'd, silently, on every real comment.
+    comment = await db["car_comments"].find_one({"commentId": comment_id})
     if not comment:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Comment not found")
-    await db["comments"].delete_one({"_id": comment["_id"]})
+    await db["car_comments"].delete_one({"commentId": comment_id})
     return {"message": "Comment deleted"}
 
 
