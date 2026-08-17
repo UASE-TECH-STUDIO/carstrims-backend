@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from app.config.settings import settings
 from datetime import datetime
 import time
+import math
+import hashlib
 
 
 class CommentBody(BaseModel):
@@ -76,6 +78,7 @@ async def public_car_feed(
     sort: Optional[str] = Query("newest"),
     skip: int = Query(0),
     limit: int = Query(20),
+    seed: Optional[str] = Query(None, description="A per-session random seed from the frontend, so ordering stays stable while scrolling/paginating but changes on each fresh visit."),
 ):
     db = get_db()
     query: dict = {}
@@ -173,33 +176,62 @@ async def public_car_feed(
     total = await db["car_listings"].count_documents(query)
 
     if sort == "score":
-        # Smart feed: boost recency + engagement + random jitter so feed varies on refresh
-        pipeline = [
-            {"$match": query},
-            {"$addFields": {
-                "ageHours": {"$divide": [
-                    {"$subtract": [datetime.utcnow(), {"$ifNull": ["$createdAt", datetime.utcnow()]}]},
-                    3600000
-                ]}
-            }},
-            {"$addFields": {
-                "feedScore": {"$add": [
-                    # Very new cars (< 2 hours) get massive boost so they always appear
-                    {"$cond": {
-                        "if": {"$lte": ["$ageHours", 2]},
-                        "then": 10000,
-                        "else": {"$multiply": [100, {"$exp": {"$multiply": [-0.008, "$ageHours"]}}]}
-                    }},
-                    {"$multiply": [{"$ifNull": ["$viewCount", 0]}, 0.3]},
-                    {"$multiply": [{"$ifNull": ["$likeCount", 0]}, 2.0]},
-                    {"$multiply": [{"$rand": {}}, 15]}
-                ]}
-            }},
-            {"$sort": {"feedScore": -1}},
-            {"$skip": skip},
-            {"$limit": limit},
-        ]
-        cars = await db["car_listings"].aggregate(pipeline).to_list(limit)
+        # Personalized-feeling feed: recency + engagement scoring, like
+        # before, but reworked in two important ways:
+        #
+        # 1. The randomness is now a deterministic hash of (seed, carId)
+        #    instead of MongoDB's $rand, which re-evaluates on every
+        #    request — with pagination (skip/limit), that could cause
+        #    the same car to appear twice, or another to get skipped
+        #    entirely, as the "random" order silently shifted between
+        #    page 1 and page 2 of the same scroll session. The frontend
+        #    generates one seed per fresh visit/refresh (not per
+        #    scroll-fetch) and sends it with every page, so ordering is
+        #    now fully stable while scrolling, but genuinely different
+        #    each time the app is opened or refreshed — and different
+        #    seeds naturally land differently per person too.
+        #
+        # 2. Dealer-diversity interleaving: cars are grouped by dealer
+        #    (each dealer's own cars keep their relative score order),
+        #    then taken round-robin across dealers — so one dealer
+        #    posting a lot doesn't dominate several consecutive feed
+        #    slots, while dealers with generally higher-scoring cars
+        #    still get interleaved earlier in each round.
+        candidates = await db["car_listings"].find(query).sort("createdAt", -1).limit(500).to_list(500)
+
+        now = datetime.utcnow()
+        effective_seed = seed or "default-seed"
+
+        for c in candidates:
+            created = c.get("createdAt") or now
+            try:
+                age_hours = max(0.0, (now - created).total_seconds() / 3600)
+            except TypeError:
+                age_hours = 0.0
+            recency = 10000.0 if age_hours <= 2 else 100.0 * math.exp(-0.008 * age_hours)
+            engagement = (c.get("viewCount", 0) or 0) * 0.3 + (c.get("likeCount", 0) or 0) * 2.0
+            h = hashlib.md5(f"{effective_seed}:{c.get('carId','')}".encode()).hexdigest()
+            jitter = (int(h[:8], 16) / 0xFFFFFFFF) * 15
+            c["_feedScore"] = recency + engagement + jitter
+
+        candidates.sort(key=lambda c: c["_feedScore"], reverse=True)
+
+        by_dealer: dict = {}
+        dealer_order: list = []
+        for c in candidates:
+            did = c.get("dealerId", "unknown")
+            if did not in by_dealer:
+                by_dealer[did] = []
+                dealer_order.append(did)
+            by_dealer[did].append(c)
+
+        interleaved: list = []
+        while any(by_dealer[d] for d in dealer_order):
+            for d in dealer_order:
+                if by_dealer[d]:
+                    interleaved.append(by_dealer[d].pop(0))
+
+        cars = interleaved[skip:skip + limit]
     else:
         cars = await db["car_listings"].find(query).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
 
