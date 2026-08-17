@@ -84,15 +84,53 @@ async def public_car_feed(
         query["status"] = status
 
     if search:
-        query["$or"] = [
-            {"brand": {"$regex": search, "$options": "i"}},
-            {"model": {"$regex": search, "$options": "i"}},
-            {"year": {"$regex": str(search), "$options": "i"}} if str(search).isdigit() else {},
-            {"color": {"$regex": search, "$options": "i"}},
-            {"carId": {"$regex": search, "$options": "i"}},
-        ]
-        # Remove empty dict from $or
-        query["$or"] = [q for q in query["$or"] if q]
+        # Smart search: recognize known vocabulary tokens (year,
+        # condition, fuel type, transmission) as structured filters
+        # extracted right out of free text — e.g. "camry 2019 used
+        # automatic" becomes year=2019 AND condition~used AND
+        # transmission~automatic, with "camry" left over as a plain
+        # text match against brand/model/color/carId/description. This
+        # replaces needing a separate filter UI for a lot of common
+        # searches.
+        CONDITION_WORDS = {"new": "new", "used": "used", "foreign": "foreign", "local": "local", "locally": "local", "salvage": "salvage"}
+        FUEL_WORDS = {"petrol": "petrol", "diesel": "diesel", "electric": "electric", "hybrid": "hybrid", "gas": "gas"}
+        TRANSMISSION_WORDS = {"automatic": "automatic", "manual": "manual", "cvt": "cvt", "semi-automatic": "semi-automatic"}
+        STATUS_WORDS = {"available": "available", "sold": "sold"}
+        STATE_WORDS = {s.lower(): s for s in ["Abuja","Lagos","Kano","Rivers","Oyo","Kaduna","Anambra","Enugu","Delta","Ogun","Imo","Ondo","Kwara","Benue","Edo","Ekiti","Cross River"]}
+
+        tokens = search.strip().split()
+        leftover_tokens = []
+        smart_filters: list = []
+
+        for tok in tokens:
+            low = tok.lower()
+            if low.isdigit() and len(low) == 4 and 1980 <= int(low) <= 2035:
+                smart_filters.append({"year": int(low)})
+            elif low in CONDITION_WORDS:
+                smart_filters.append({"condition": {"$regex": CONDITION_WORDS[low], "$options": "i"}})
+            elif low in FUEL_WORDS:
+                smart_filters.append({"fuelType": {"$regex": FUEL_WORDS[low], "$options": "i"}})
+            elif low in TRANSMISSION_WORDS:
+                smart_filters.append({"transmission": {"$regex": TRANSMISSION_WORDS[low], "$options": "i"}})
+            elif low in STATUS_WORDS:
+                query["status"] = STATUS_WORDS[low]  # overrides the default "available" status param
+            elif low in STATE_WORDS:
+                smart_filters.append({"state": {"$regex": STATE_WORDS[low], "$options": "i"}})
+            else:
+                leftover_tokens.append(tok)
+
+        if smart_filters:
+            query["$and"] = query.get("$and", []) + smart_filters
+
+        leftover = " ".join(leftover_tokens).strip()
+        if leftover:
+            query["$or"] = [
+                {"brand": {"$regex": leftover, "$options": "i"}},
+                {"model": {"$regex": leftover, "$options": "i"}},
+                {"color": {"$regex": leftover, "$options": "i"}},
+                {"carId": {"$regex": leftover, "$options": "i"}},
+                {"description": {"$regex": leftover, "$options": "i"}},
+            ]
 
     if brand:
         query["brand"] = {"$regex": brand, "$options": "i"}
