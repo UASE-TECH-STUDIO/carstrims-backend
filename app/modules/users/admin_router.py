@@ -326,6 +326,47 @@ async def reset_dealer_password(user_id: str, data: dict = Body({}), admin=Depen
     return {"message": "Password reset", "newPassword": new_password}
 
 
+#  CARS (platform-wide, for the super admin "Cars Listed" page)
+@router.get("/cars")
+async def list_all_cars(
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    dealer_id: Optional[str] = Query(None),
+    skip: int = Query(0), limit: int = Query(20),
+    admin=Depends(require_admin),
+):
+    db = get_db()
+    query: dict = {}
+    if status and status != "all":
+        query["status"] = status
+    if dealer_id:
+        query["dealerId"] = dealer_id
+    if search:
+        query["$or"] = [
+            {"brand": {"$regex": search, "$options": "i"}},
+            {"model": {"$regex": search, "$options": "i"}},
+            {"carId": {"$regex": search, "$options": "i"}},
+        ]
+    total = await db["car_listings"].count_documents(query)
+    cars = await db["car_listings"].find(query).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+
+    # Batch dealer lookup (same pattern as the public feed fix) instead
+    # of one query per car.
+    dealer_ids = list({c["dealerId"] for c in cars if ObjectId.is_valid(c.get("dealerId", ""))})
+    dealers_by_id = {}
+    if dealer_ids:
+        docs = await db["dealer_organizations"].find({"_id": {"$in": [ObjectId(d) for d in dealer_ids]}}).to_list(len(dealer_ids))
+        dealers_by_id = {str(d["_id"]): d for d in docs}
+
+    enriched = []
+    for c in cars:
+        s = serialize_doc(c)
+        dealer = dealers_by_id.get(c.get("dealerId"))
+        s["dealerName"] = dealer.get("companyName") if dealer else None
+        enriched.append(s)
+    return {"total": total, "cars": enriched}
+
+
 #  USERS
 @router.get("/users")
 async def list_users(
