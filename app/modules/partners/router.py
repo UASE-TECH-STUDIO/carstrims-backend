@@ -133,14 +133,27 @@ async def partner_dashboard(current_user: dict = Depends(get_current_user)):
         car_docs = await db["car_listings"].find(
             {"carId": {"$in": all_car_ids}}
         ).sort("createdAt", -1).to_list(200)
+
+        # Batch-fetch dealers and expense totals instead of one query
+        # per car (same N+1 fix already applied to the public feed).
+        dealer_ids = list({c["dealerId"] for c in car_docs if ObjectId.is_valid(c.get("dealerId", ""))})
+        dealers_by_id = {}
+        if dealer_ids:
+            dealer_docs = await db["dealer_organizations"].find({"_id": {"$in": [ObjectId(d) for d in dealer_ids]}}).to_list(len(dealer_ids))
+            dealers_by_id = {str(d["_id"]): d for d in dealer_docs}
+
+        expense_totals: dict = {}
+        expense_docs = await db["expense_records"].find({"carId": {"$in": all_car_ids}}).to_list(2000)
+        for e in expense_docs:
+            expense_totals[e["carId"]] = expense_totals.get(e["carId"], 0) + (e.get("amount", 0) or 0)
+
         for c in car_docs:
             s = serialize_doc(c)
-            if c.get("dealerId") and ObjectId.is_valid(c["dealerId"]):
-                dealer = await db["dealer_organizations"].find_one(
-                    {"_id": ObjectId(c["dealerId"])}
-                )
-                s["dealerName"] = dealer.get("companyName") if dealer else ""
-                s["dealerLogo"] = dealer.get("logo") if dealer else None
+            dealer = dealers_by_id.get(c.get("dealerId"))
+            if dealer:
+                s["dealerName"] = dealer.get("companyName")
+                s["dealerLogo"] = dealer.get("logo")
+            s["totalExpenses"] = expense_totals.get(c.get("carId"), 0)
             cars.append(s)
 
     dealers = []
