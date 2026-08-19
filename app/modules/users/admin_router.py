@@ -483,6 +483,63 @@ async def admin_upload_user_doc(
     return {"url": url, "field": field}
 
 
+# Maps the short doc_type values the frontend sends to the actual field
+# names stored on the dealer_organizations document.
+_DEALER_DOC_TYPE_FIELDS = {
+    "logo": "logo", "id": "idCardUrl", "cac": "cacUrl", "passport": "passportPhoto",
+}
+
+
+@router.post("/dealers/{dealer_id}/upload-doc")
+async def admin_upload_dealer_doc(
+    dealer_id: str,
+    doc_type: str = Query(...),
+    file: UploadFile = File(...),
+    admin=Depends(require_admin),
+):
+    """
+    This endpoint was called by the dealer detail page's document
+    upload UI but never actually existed — every upload attempt there
+    hit a genuine 404 from FastAPI's own routing, showing as a raw
+    'not found' error. The equivalent action from the linked owner's
+    user account page worked because it hits the separate, existing
+    /users/{user_id}/upload-doc endpoint above.
+    """
+    field = _DEALER_DOC_TYPE_FIELDS.get(doc_type)
+    if not field:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Unknown doc_type: {doc_type}")
+
+    db = get_db()
+    q = {"_id": ObjectId(dealer_id)} if ObjectId.is_valid(dealer_id) else {"dealerId": dealer_id}
+    dealer = await db["dealer_organizations"].find_one(q)
+    if not dealer:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Dealer not found")
+
+    contents = await file.read()
+    result = cloudinary.uploader.upload(contents, folder="carstrims/documents", resource_type="auto")
+    url = result.get("secure_url")
+    if not url:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="Upload failed")
+
+    await db["dealer_organizations"].update_one(
+        {"_id": dealer["_id"]}, {"$set": {field: url, "updatedAt": datetime.utcnow()}}
+    )
+
+    # Cascade to the linked user account too, same as the reverse
+    # direction already does, so both stay in sync regardless of which
+    # page the upload happened from.
+    if dealer.get("userId") and ObjectId.is_valid(dealer["userId"]):
+        await db["users"].update_one(
+            {"_id": ObjectId(dealer["userId"])},
+            {"$set": {field: url, "updatedAt": datetime.utcnow()}}
+        )
+
+    return {"url": url, "field": field}
+
+
 @router.post("/users/{user_id}/restrict-profile-field")
 async def restrict_profile_field(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
     db = get_db()
