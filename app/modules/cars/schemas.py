@@ -6,7 +6,7 @@ class CarCreateRequest(BaseModel):
     brand: str
     model: str
     year: int
-    color: str
+    color: Optional[str] = None
     mileage: Optional[float] = None
     vin: Optional[str] = None
     engineType: Optional[str] = None
@@ -16,7 +16,7 @@ class CarCreateRequest(BaseModel):
     description: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
-    purchasePrice: float
+    purchasePrice: Optional[float] = None
     sellingPrice: float
     promoPrice: Optional[float] = None
     minNegotiationPrice: Optional[float] = None

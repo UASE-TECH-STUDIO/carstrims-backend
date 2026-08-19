@@ -28,7 +28,7 @@ async def create_car(dealer_id: str, user_id: str, data: dict) -> dict:
     if not dealer:
         raise HTTPException(status_code=404, detail="Dealer profile not found")
 
-    purchase_price = data.get("purchasePrice", 0)
+    purchase_price = data.get("purchasePrice") or 0
     selling_price = data.get("sellingPrice", 0)
     estimated_profit = selling_price - purchase_price
 
@@ -151,8 +151,8 @@ async def update_car(car_id: str, dealer_id: str, data: dict) -> dict:
     data["updatedAt"] = datetime.utcnow()
 
     if "purchasePrice" in data or "sellingPrice" in data:
-        purchase = data.get("purchasePrice", car.get("purchasePrice", 0))
-        selling = data.get("sellingPrice", car.get("sellingPrice", 0))
+        purchase = data["purchasePrice"] if data.get("purchasePrice") is not None else (car.get("purchasePrice") or 0)
+        selling = data["sellingPrice"] if data.get("sellingPrice") is not None else (car.get("sellingPrice") or 0)
         data["estimatedProfit"] = selling - purchase
 
     await db["car_listings"].update_one(query, {"$set": data})
@@ -189,7 +189,7 @@ async def mark_car_sold(
     ]).to_list(1)
     total_expenses = expenses_result[0]["total"] if expenses_result else 0
 
-    profit = selling_price - car.get("purchasePrice", 0)
+    profit = selling_price - (car.get("purchasePrice") or 0)
     net_profit = profit - total_expenses
 
     trans_id = "TXN-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
@@ -201,7 +201,7 @@ async def mark_car_sold(
         "dealerId": dealer_id,
         "staffId": staff_id,
         "sellingPrice": selling_price,
-        "purchasePrice": car.get("purchasePrice", 0),
+        "purchasePrice": car.get("purchasePrice") or 0,
         "profit": profit,
         "expenses": total_expenses,
         "netProfit": net_profit,
