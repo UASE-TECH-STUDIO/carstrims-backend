@@ -177,6 +177,37 @@ async def public_car_feed(
             ai_handled = True
 
     if search and not ai_handled:
+        # Voice input sometimes transcribes numbers as words instead
+        # of digits ("three million" rather than "3 million") — the
+        # price regex below only recognizes digits, so normalize
+        # common number words first, whether typed or spoken.
+        NUMBER_WORDS = {
+            "one":"1","two":"2","three":"3","four":"4","five":"5","six":"6",
+            "seven":"7","eight":"8","nine":"9","ten":"10","eleven":"11","twelve":"12",
+            "thirteen":"13","fourteen":"14","fifteen":"15","twenty":"20","thirty":"30",
+            "forty":"40","fifty":"50","half":"0.5",
+        }
+        def _normalize_number_words(s: str) -> str:
+            words = s.split()
+            out = []
+            i = 0
+            while i < len(words):
+                w = words[i]
+                low = w.lower().strip(".,!?;:")
+                if low in NUMBER_WORDS:
+                    # "three point five" -> "3.5"
+                    if i + 2 < len(words) and words[i+1].lower() == "point" and words[i+2].lower().strip(".,!?;:") in NUMBER_WORDS:
+                        out.append(f"{NUMBER_WORDS[low]}.{NUMBER_WORDS[words[i+2].lower().strip('.,!?;:')]}")
+                        i += 3
+                        continue
+                    out.append(NUMBER_WORDS[low])
+                else:
+                    out.append(w)
+                i += 1
+            return " ".join(out)
+
+        search = _normalize_number_words(search)
+
         # Price-range phrases, parsed BEFORE the token-by-token pass
         # below, so "3.5-6.5million" or "under 10m" become a real
         # price filter instead of being treated as unmatched text.
@@ -250,6 +281,7 @@ async def public_car_feed(
         TRANSMISSION_WORDS = {"automatic": "automatic", "manual": "manual", "cvt": "cvt", "semi-automatic": "semi-automatic"}
         STATUS_WORDS = {"available": "available", "sold": "sold"}
         STATE_WORDS = {s.lower(): s for s in ["Abuja","Lagos","Kano","Rivers","Oyo","Kaduna","Anambra","Enugu","Delta","Ogun","Imo","Ondo","Kwara","Benue","Edo","Ekiti","Cross River"]}
+        COLOR_WORDS = {c.lower(): c for c in ["Black","White","Silver","Grey","Gray","Red","Blue","Green","Gold","Brown","Beige","Maroon","Orange","Yellow","Purple","Wine","Cream","Navy"]}
 
         # Generic English filler that doesn't carry car-shopping
         # meaning ("that is it should be like", "I want to buy", "a
@@ -259,6 +291,7 @@ async def public_car_feed(
             "a","an","the","that","this","is","are","it","should","be","like","i",
             "want","need","looking","for","to","buy","get","find","some","any",
             "car","cars","vehicle","vehicles","one","with","and","or","can",
+            "colour","color","range","within","from","of","in","having",
         }
 
         tokens = search.strip().split()
@@ -291,6 +324,9 @@ async def public_car_feed(
             elif low in STATE_WORDS:
                 smart_filters.append({"state": {"$regex": STATE_WORDS[low], "$options": "i"}})
                 understood_filters.append({"type": "state", "label": STATE_WORDS[low], "matchedText": tok})
+            elif low in COLOR_WORDS:
+                smart_filters.append({"color": {"$regex": COLOR_WORDS[low], "$options": "i"}})
+                understood_filters.append({"type": "color", "label": COLOR_WORDS[low], "matchedText": tok})
             elif low in SEARCH_STOPWORDS:
                 continue  # generic filler — drop entirely, not even kept as leftover
             else:
