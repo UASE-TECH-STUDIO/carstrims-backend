@@ -89,6 +89,7 @@ async def public_car_feed(
         query["status"] = status
 
     understood_filters: list = []  # itemized, human-readable summary of what the search text was understood as — returned to the frontend to show as adjustable filter chips, like Jiji
+    leftover_keywords: list = []  # descriptive words that are a soft ranking preference, not a hard filter requirement
     ai_handled = False
 
     if search:
@@ -150,14 +151,13 @@ async def public_car_feed(
             if status_val in ("available", "sold"):
                 query["status"] = status_val
 
+            # Same principle as the regex fallback: remaining
+            # descriptive words are a soft preference used for
+            # ranking, not a hard requirement that can zero out
+            # results just because a car's description doesn't
+            # happen to mention them.
             keywords_val = _clean_str(ai_result.get("remainingKeywords"))
-            if keywords_val:
-                ai_filters.append({"$or": [
-                    {"brand": {"$regex": re.escape(keywords_val), "$options": "i"}},
-                    {"model": {"$regex": re.escape(keywords_val), "$options": "i"}},
-                    {"color": {"$regex": re.escape(keywords_val), "$options": "i"}},
-                    {"description": {"$regex": re.escape(keywords_val), "$options": "i"}},
-                ]})
+            leftover_keywords = keywords_val.split() if keywords_val else []
 
             if ai_filters:
                 query["$and"] = query.get("$and", []) + ai_filters
@@ -335,23 +335,17 @@ async def public_car_feed(
         if smart_filters:
             query["$and"] = query.get("$and", []) + smart_filters
 
+        # Leftover words (things like "neatly used" nuance, "not more
+        # than a year", or anything else that isn't a recognized major
+        # filter) are treated as a SOFT preference, not a requirement —
+        # they're checked against the description and other fields to
+        # rank matching cars higher, but a car that doesn't happen to
+        # mention them is still shown. Major filters (brand, color,
+        # price, year, condition, etc.) always control which cars show
+        # up at all; leftover words never zero out results on their
+        # own the way they used to when they were required matches.
+        leftover_keywords = leftover_tokens
         if leftover_tokens:
-            # Each remaining meaningful word must match SOMEWHERE
-            # (brand, model, color, carId, or description) — not the
-            # whole leftover phrase as one literal substring, which
-            # would fail to match almost any real car the moment
-            # there's more than one leftover word.
-            leftover_conditions = [
-                {"$or": [
-                    {"brand": {"$regex": re.escape(tok), "$options": "i"}},
-                    {"model": {"$regex": re.escape(tok), "$options": "i"}},
-                    {"color": {"$regex": re.escape(tok), "$options": "i"}},
-                    {"carId": {"$regex": re.escape(tok), "$options": "i"}},
-                    {"description": {"$regex": re.escape(tok), "$options": "i"}},
-                ]}
-                for tok in leftover_tokens
-            ]
-            query["$and"] = query.get("$and", []) + leftover_conditions
             understood_filters.append({"type": "keyword", "label": " ".join(leftover_tokens), "matchedText": " ".join(leftover_tokens)})
 
     if brand:
@@ -431,7 +425,25 @@ async def public_car_feed(
             engagement = (c.get("viewCount", 0) or 0) * 0.3 + (c.get("likeCount", 0) or 0) * 2.0
             h = hashlib.md5(f"{effective_seed}:{c.get('carId','')}".encode()).hexdigest()
             jitter = (int(h[:8], 16) / 0xFFFFFFFF) * 15
-            c["_feedScore"] = recency + engagement + jitter
+
+            # Soft boost for leftover descriptive words ("neatly used",
+            # "not more than a year", etc.) — checked against the
+            # car's own text fields and added as a BONUS on top of the
+            # normal score, never as a requirement. A car that doesn't
+            # mention "neatly used" still shows up for a "Toyota black
+            # 3 million neatly used" search, just not boosted above
+            # ones that do mention it.
+            keyword_bonus = 0.0
+            if leftover_keywords:
+                haystack = " ".join([
+                    str(c.get("description") or ""), str(c.get("brand") or ""),
+                    str(c.get("model") or ""), str(c.get("color") or ""),
+                    str(c.get("condition") or ""),
+                ]).lower()
+                matches = sum(1 for kw in leftover_keywords if kw.lower() in haystack)
+                keyword_bonus = matches * 200.0  # meaningful boost, but never larger than the "brand new listing" recency spike
+
+            c["_feedScore"] = recency + engagement + jitter + keyword_bonus
 
         candidates.sort(key=lambda c: c["_feedScore"], reverse=True)
 
