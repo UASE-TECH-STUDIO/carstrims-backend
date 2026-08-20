@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
 
+    # Gemini (AI-powered natural language search)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
     class Config:
         env_file = ".env"
         extra = "ignore"

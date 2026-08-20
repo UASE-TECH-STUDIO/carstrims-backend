@@ -4,6 +4,7 @@ from app.auth.dependencies import get_current_user, get_current_dealer, get_curr
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.utils.qr_service import generate_dealer_qr, get_dealer_qr
 from app.utils.comments_service import add_comment, get_car_comments, delete_comment, add_reply
+from app.utils.ai_search_service import parse_search_with_ai
 from app.modules.users.user_service import toggle_like, get_user_likes, add_favorite, remove_favorite
 from app.modules.cars.service import get_public_cars, get_car_by_id
 from app.database.connection import get_db
@@ -88,8 +89,94 @@ async def public_car_feed(
         query["status"] = status
 
     understood_filters: list = []  # itemized, human-readable summary of what the search text was understood as — returned to the frontend to show as adjustable filter chips, like Jiji
+    ai_handled = False
 
     if search:
+        # Try real AI understanding first (Gemini, scoped to this
+        # app's own domain via the prompt in ai_search_service.py).
+        # Falls back to the regex-based parser below if no API key is
+        # configured, or the call fails/times out for any reason —
+        # search must never break because of an AI hiccup.
+        ai_result = await parse_search_with_ai(search)
+        if ai_result and isinstance(ai_result, dict) and ai_result.get("intent") == "search_cars":
+            ai_filters: list = []
+
+            def _clean_str(v):
+                return v.strip() if isinstance(v, str) and v.strip() else None
+
+            brand_val = _clean_str(ai_result.get("brand"))
+            if brand_val:
+                ai_filters.append({"brand": {"$regex": re.escape(brand_val), "$options": "i"}})
+
+            model_val = _clean_str(ai_result.get("model"))
+            if model_val:
+                ai_filters.append({"model": {"$regex": re.escape(model_val), "$options": "i"}})
+
+            year_from = ai_result.get("yearFrom")
+            year_to = ai_result.get("yearTo")
+            if isinstance(year_from, int) and 1980 <= year_from <= 2035:
+                if isinstance(year_to, int) and 1980 <= year_to <= 2035 and year_to != year_from:
+                    ai_filters.append({"year": {"$gte": min(year_from, year_to), "$lte": max(year_from, year_to)}})
+                else:
+                    ai_filters.append({"year": year_from})
+
+            price_min = ai_result.get("priceMinNgn")
+            price_max = ai_result.get("priceMaxNgn")
+            price_cond: dict = {}
+            if isinstance(price_min, (int, float)) and price_min > 0:
+                price_cond["$gte"] = price_min
+            if isinstance(price_max, (int, float)) and price_max > 0:
+                price_cond["$lte"] = price_max
+            if price_cond:
+                query["sellingPrice"] = price_cond
+
+            condition_val = _clean_str(ai_result.get("condition"))
+            if condition_val:
+                ai_filters.append({"condition": {"$regex": re.escape(condition_val), "$options": "i"}})
+
+            fuel_val = _clean_str(ai_result.get("fuelType"))
+            if fuel_val:
+                ai_filters.append({"fuelType": {"$regex": re.escape(fuel_val), "$options": "i"}})
+
+            trans_val = _clean_str(ai_result.get("transmission"))
+            if trans_val:
+                ai_filters.append({"transmission": {"$regex": re.escape(trans_val), "$options": "i"}})
+
+            state_val = _clean_str(ai_result.get("state"))
+            if state_val:
+                ai_filters.append({"state": {"$regex": re.escape(state_val), "$options": "i"}})
+
+            status_val = _clean_str(ai_result.get("status"))
+            if status_val in ("available", "sold"):
+                query["status"] = status_val
+
+            keywords_val = _clean_str(ai_result.get("remainingKeywords"))
+            if keywords_val:
+                ai_filters.append({"$or": [
+                    {"brand": {"$regex": re.escape(keywords_val), "$options": "i"}},
+                    {"model": {"$regex": re.escape(keywords_val), "$options": "i"}},
+                    {"color": {"$regex": re.escape(keywords_val), "$options": "i"}},
+                    {"description": {"$regex": re.escape(keywords_val), "$options": "i"}},
+                ]})
+
+            if ai_filters:
+                query["$and"] = query.get("$and", []) + ai_filters
+
+            summary = ai_result.get("understoodSummary")
+            if isinstance(summary, list):
+                for item in summary:
+                    if isinstance(item, dict) and item.get("label"):
+                        # AI-derived chips don't map to a literal text
+                        # span in the original search string the way
+                        # regex-matched ones do, so matchedText is left
+                        # empty — the frontend clears the whole search
+                        # box on removal for these instead of trying a
+                        # precise partial-text removal.
+                        understood_filters.append({"type": "ai", "label": str(item["label"])[:60], "matchedText": ""})
+
+            ai_handled = True
+
+    if search and not ai_handled:
         # Price-range phrases, parsed BEFORE the token-by-token pass
         # below, so "3.5-6.5million" or "under 10m" become a real
         # price filter instead of being treated as unmatched text.
