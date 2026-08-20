@@ -14,6 +14,7 @@ from datetime import datetime
 import time
 import math
 import hashlib
+import re
 
 
 class CommentBody(BaseModel):
@@ -85,6 +86,55 @@ async def public_car_feed(
 
     if status and status != "all":
         query["status"] = status
+
+    if search:
+        # Price-range phrases, parsed BEFORE the token-by-token pass
+        # below, so "3.5-6.5million" or "under 10m" become a real
+        # price filter instead of being treated as unmatched text.
+        # Handles: "3.5-6.5million", "3.5m to 6.5m", "under 10m",
+        # "below 5 million", "over 20m", "above 15million",
+        # "around 5m" (+/-20%).
+        price_search = search
+        MILLION = 1_000_000
+
+        def _num(s: str) -> float:
+            return float(s.replace(",", ""))
+
+        range_match = re.search(
+            r"(\d+(?:\.\d+)?)\s*(?:m|million)?\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:m|million)\b",
+            price_search, re.IGNORECASE,
+        )
+        under_match = re.search(r"\b(?:under|below|less than|not more than)\s*(?:n|ngn|₦)?\s*(\d+(?:\.\d+)?)\s*(m|million)\b", price_search, re.IGNORECASE)
+        over_match = re.search(r"\b(?:over|above|more than|at least)\s*(?:n|ngn|₦)?\s*(\d+(?:\.\d+)?)\s*(m|million)\b", price_search, re.IGNORECASE)
+        around_match = re.search(r"\b(?:around|about|roughly|approximately)\s*(?:n|ngn|₦)?\s*(\d+(?:\.\d+)?)\s*(m|million)\b", price_search, re.IGNORECASE)
+
+        price_filter: dict = {}
+        if range_match:
+            lo, hi = _num(range_match.group(1)) * MILLION, _num(range_match.group(2)) * MILLION
+            price_filter = {"$gte": min(lo, hi), "$lte": max(lo, hi)}
+            price_search = price_search[:range_match.start()] + price_search[range_match.end():]
+        elif under_match:
+            price_filter = {"$lte": _num(under_match.group(1)) * MILLION}
+            price_search = price_search[:under_match.start()] + price_search[under_match.end():]
+        elif over_match:
+            price_filter = {"$gte": _num(over_match.group(1)) * MILLION}
+            price_search = price_search[:over_match.start()] + price_search[over_match.end():]
+        elif around_match:
+            center = _num(around_match.group(1)) * MILLION
+            price_filter = {"$gte": center * 0.8, "$lte": center * 1.2}
+            price_search = price_search[:around_match.start()] + price_search[around_match.end():]
+
+        if price_filter:
+            query["sellingPrice"] = price_filter
+            search = price_search.strip()
+
+        # Strip filler/modifier words that don't change meaning but
+        # would otherwise become noise in the leftover text match —
+        # "neatly used", "very clean", "close to me" etc.
+        search = re.sub(
+            r"\b(neatly|nicely|fairly|very|really|super|extremely|clean|close to me|near me|around me|nearby)\b",
+            " ", search, flags=re.IGNORECASE,
+        ).strip()
 
     if search:
         # Smart search: recognize known vocabulary tokens (year,
