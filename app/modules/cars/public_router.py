@@ -384,26 +384,51 @@ async def universal_search(
         ).sort("createdAt", -1).limit(limit).to_list(limit)
         results["cars"] = [serialize_doc(c) for c in cars]
 
+    # Common filler words in natural phrases like "looking for a
+    # dealer named musa in abuja" or "dealers in lagos" — stripped so
+    # only the meaningful tokens (names, locations) are required to
+    # match; otherwise every filler word would also need a match and
+    # the search would return nothing.
+    STOPWORDS = {
+        "a","an","the","for","in","at","near","around","close","to","of","on",
+        "looking","find","search","show","me","is","are","he","she","they",
+        "dealer","dealers","user","users","person","people","named","name","who",
+    }
+
     if "dealers" in want:
+        # Token-aware matching: split the query into words and require
+        # EVERY meaningful word to match SOMEWHERE across the dealer's
+        # name/city/state fields — so "musa abuja" or "looking for
+        # dealer musa in abuja" correctly finds a dealer named Musa
+        # located in Abuja, even though no single field contains the
+        # literal phrase.
+        tokens = [t for t in q.strip().split() if t and t.lower() not in STOPWORDS]
+        token_conditions = [
+            {"$or": [
+                {"companyName": {"$regex": re.escape(tok), "$options": "i"}},
+                {"ownerName": {"$regex": re.escape(tok), "$options": "i"}},
+                {"city": {"$regex": re.escape(tok), "$options": "i"}},
+                {"state": {"$regex": re.escape(tok), "$options": "i"}},
+            ]}
+            for tok in tokens
+        ] or [{"companyName": {"$regex": re.escape(q), "$options": "i"}}]
         dealers = await db["dealer_organizations"].find({
             "status": "approved",
-            "$or": [
-                {"companyName": {"$regex": q, "$options": "i"}},
-                {"ownerName": {"$regex": q, "$options": "i"}},
-                {"city": {"$regex": q, "$options": "i"}},
-            ],
+            "$and": token_conditions,
         }).limit(limit).to_list(limit)
         results["dealers"] = [serialize_doc(d) for d in dealers]
 
     if "users" in want:
+        tokens = [t for t in q.strip().split() if t and t.lower() not in STOPWORDS]
+        token_conditions = [
+            {"$or": [
+                {"fullName": {"$regex": re.escape(tok), "$options": "i"}},
+                {"username": {"$regex": re.escape(tok), "$options": "i"}},
+            ]}
+            for tok in tokens
+        ] or [{"fullName": {"$regex": re.escape(q), "$options": "i"}}]
         users = await db["users"].find(
-            {
-                "status": {"$ne": "suspended"},
-                "$or": [
-                    {"fullName": {"$regex": q, "$options": "i"}},
-                    {"username": {"$regex": q, "$options": "i"}},
-                ],
-            },
+            {"status": {"$ne": "suspended"}, "$and": token_conditions},
             {"passwordHash": 0},  # never expose this, even hashed
         ).limit(limit).to_list(limit)
         results["users"] = [serialize_doc(u) for u in users]
