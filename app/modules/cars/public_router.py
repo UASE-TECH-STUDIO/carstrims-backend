@@ -118,22 +118,22 @@ async def public_car_feed(
             lo, hi = _num(range_match.group(1)) * MILLION, _num(range_match.group(2)) * MILLION
             price_filter = {"$gte": min(lo, hi), "$lte": max(lo, hi)}
             price_search = price_search[:range_match.start()] + price_search[range_match.end():]
-            understood_filters.append({"type": "price", "label": f"{_fmt_money(min(lo,hi))} - {_fmt_money(max(lo,hi))}"})
+            understood_filters.append({"type": "price", "label": f"{_fmt_money(min(lo,hi))} - {_fmt_money(max(lo,hi))}", "matchedText": range_match.group(0)})
         elif under_match:
             val = _num(under_match.group(1)) * MILLION
             price_filter = {"$lte": val}
             price_search = price_search[:under_match.start()] + price_search[under_match.end():]
-            understood_filters.append({"type": "price", "label": f"Under {_fmt_money(val)}"})
+            understood_filters.append({"type": "price", "label": f"Under {_fmt_money(val)}", "matchedText": under_match.group(0)})
         elif over_match:
             val = _num(over_match.group(1)) * MILLION
             price_filter = {"$gte": val}
             price_search = price_search[:over_match.start()] + price_search[over_match.end():]
-            understood_filters.append({"type": "price", "label": f"Over {_fmt_money(val)}"})
+            understood_filters.append({"type": "price", "label": f"Over {_fmt_money(val)}", "matchedText": over_match.group(0)})
         elif around_match:
             center = _num(around_match.group(1)) * MILLION
             price_filter = {"$gte": center * 0.8, "$lte": center * 1.2}
             price_search = price_search[:around_match.start()] + price_search[around_match.end():]
-            understood_filters.append({"type": "price", "label": f"Around {_fmt_money(center)}"})
+            understood_filters.append({"type": "price", "label": f"Around {_fmt_money(center)}", "matchedText": around_match.group(0)})
 
         if price_filter:
             query["sellingPrice"] = price_filter
@@ -185,25 +185,25 @@ async def public_car_feed(
             low = tok.lower()
             if low.isdigit() and len(low) == 4 and 1980 <= int(low) <= 2035:
                 smart_filters.append({"year": int(low)})
-                understood_filters.append({"type": "year", "label": low})
+                understood_filters.append({"type": "year", "label": low, "matchedText": tok})
             elif low in BRAND_WORDS:
                 smart_filters.append({"brand": {"$regex": re.escape(BRAND_WORDS[low]), "$options": "i"}})
-                understood_filters.append({"type": "brand", "label": BRAND_WORDS[low]})
+                understood_filters.append({"type": "brand", "label": BRAND_WORDS[low], "matchedText": tok})
             elif low in CONDITION_WORDS:
                 smart_filters.append({"condition": {"$regex": CONDITION_WORDS[low], "$options": "i"}})
-                understood_filters.append({"type": "condition", "label": tok.capitalize()})
+                understood_filters.append({"type": "condition", "label": tok.capitalize(), "matchedText": tok})
             elif low in FUEL_WORDS:
                 smart_filters.append({"fuelType": {"$regex": FUEL_WORDS[low], "$options": "i"}})
-                understood_filters.append({"type": "fuel", "label": tok.capitalize()})
+                understood_filters.append({"type": "fuel", "label": tok.capitalize(), "matchedText": tok})
             elif low in TRANSMISSION_WORDS:
                 smart_filters.append({"transmission": {"$regex": TRANSMISSION_WORDS[low], "$options": "i"}})
-                understood_filters.append({"type": "transmission", "label": tok.capitalize()})
+                understood_filters.append({"type": "transmission", "label": tok.capitalize(), "matchedText": tok})
             elif low in STATUS_WORDS:
                 query["status"] = STATUS_WORDS[low]  # overrides the default "available" status param
-                understood_filters.append({"type": "status", "label": tok.capitalize()})
+                understood_filters.append({"type": "status", "label": tok.capitalize(), "matchedText": tok})
             elif low in STATE_WORDS:
                 smart_filters.append({"state": {"$regex": STATE_WORDS[low], "$options": "i"}})
-                understood_filters.append({"type": "state", "label": STATE_WORDS[low]})
+                understood_filters.append({"type": "state", "label": STATE_WORDS[low], "matchedText": tok})
             elif low in SEARCH_STOPWORDS:
                 continue  # generic filler — drop entirely, not even kept as leftover
             else:
@@ -229,7 +229,7 @@ async def public_car_feed(
                 for tok in leftover_tokens
             ]
             query["$and"] = query.get("$and", []) + leftover_conditions
-            understood_filters.append({"type": "keyword", "label": " ".join(leftover_tokens)})
+            understood_filters.append({"type": "keyword", "label": " ".join(leftover_tokens), "matchedText": " ".join(leftover_tokens)})
 
     if brand:
         query["brand"] = {"$regex": brand, "$options": "i"}
