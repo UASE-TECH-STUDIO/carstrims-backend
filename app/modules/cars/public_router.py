@@ -87,6 +87,8 @@ async def public_car_feed(
     if status and status != "all":
         query["status"] = status
 
+    understood_filters: list = []  # itemized, human-readable summary of what the search text was understood as — returned to the frontend to show as adjustable filter chips, like Jiji
+
     if search:
         # Price-range phrases, parsed BEFORE the token-by-token pass
         # below, so "3.5-6.5million" or "under 10m" become a real
@@ -99,6 +101,9 @@ async def public_car_feed(
 
         def _num(s: str) -> float:
             return float(s.replace(",", ""))
+
+        def _fmt_money(n: float) -> str:
+            return f"NGN {n/MILLION:.1f}M" if n % MILLION else f"NGN {int(n/MILLION)}M"
 
         range_match = re.search(
             r"(\d+(?:\.\d+)?)\s*(?:m|million)?\s*(?:-|to)\s*(\d+(?:\.\d+)?)\s*(?:m|million)\b",
@@ -113,16 +118,22 @@ async def public_car_feed(
             lo, hi = _num(range_match.group(1)) * MILLION, _num(range_match.group(2)) * MILLION
             price_filter = {"$gte": min(lo, hi), "$lte": max(lo, hi)}
             price_search = price_search[:range_match.start()] + price_search[range_match.end():]
+            understood_filters.append({"type": "price", "label": f"{_fmt_money(min(lo,hi))} - {_fmt_money(max(lo,hi))}"})
         elif under_match:
-            price_filter = {"$lte": _num(under_match.group(1)) * MILLION}
+            val = _num(under_match.group(1)) * MILLION
+            price_filter = {"$lte": val}
             price_search = price_search[:under_match.start()] + price_search[under_match.end():]
+            understood_filters.append({"type": "price", "label": f"Under {_fmt_money(val)}"})
         elif over_match:
-            price_filter = {"$gte": _num(over_match.group(1)) * MILLION}
+            val = _num(over_match.group(1)) * MILLION
+            price_filter = {"$gte": val}
             price_search = price_search[:over_match.start()] + price_search[over_match.end():]
+            understood_filters.append({"type": "price", "label": f"Over {_fmt_money(val)}"})
         elif around_match:
             center = _num(around_match.group(1)) * MILLION
             price_filter = {"$gte": center * 0.8, "$lte": center * 1.2}
             price_search = price_search[:around_match.start()] + price_search[around_match.end():]
+            understood_filters.append({"type": "price", "label": f"Around {_fmt_money(center)}"})
 
         if price_filter:
             query["sellingPrice"] = price_filter
@@ -137,53 +148,88 @@ async def public_car_feed(
         ).strip()
 
     if search:
-        # Smart search: recognize known vocabulary tokens (year,
+        # Smart search: recognize known vocabulary tokens (brand, year,
         # condition, fuel type, transmission) as structured filters
         # extracted right out of free text — e.g. "camry 2019 used
         # automatic" becomes year=2019 AND condition~used AND
         # transmission~automatic, with "camry" left over as a plain
         # text match against brand/model/color/carId/description. This
         # replaces needing a separate filter UI for a lot of common
-        # searches.
+        # searches. Vocabulary is deliberately scoped to this app's own
+        # domain (car shopping), not general-purpose language.
+        BRAND_WORDS = {b.lower(): b for b in ["Toyota","Honda","Mercedes","Mercedes-Benz","Benz","BMW","Lexus","Ford","Hyundai","Kia","Chevrolet","Audi","Land Rover","Landrover","Jeep","Volkswagen","VW","Nissan","Mazda","Peugeot","Mitsubishi","Subaru","Isuzu"]}
         CONDITION_WORDS = {"new": "new", "used": "used", "foreign": "foreign", "local": "local", "locally": "local", "salvage": "salvage"}
         FUEL_WORDS = {"petrol": "petrol", "diesel": "diesel", "electric": "electric", "hybrid": "hybrid", "gas": "gas"}
         TRANSMISSION_WORDS = {"automatic": "automatic", "manual": "manual", "cvt": "cvt", "semi-automatic": "semi-automatic"}
         STATUS_WORDS = {"available": "available", "sold": "sold"}
         STATE_WORDS = {s.lower(): s for s in ["Abuja","Lagos","Kano","Rivers","Oyo","Kaduna","Anambra","Enugu","Delta","Ogun","Imo","Ondo","Kwara","Benue","Edo","Ekiti","Cross River"]}
 
+        # Generic English filler that doesn't carry car-shopping
+        # meaning ("that is it should be like", "I want to buy", "a
+        # car" etc.) — stripped so it doesn't pollute the leftover
+        # keyword match or get shown as a confusing filter chip.
+        SEARCH_STOPWORDS = {
+            "a","an","the","that","this","is","are","it","should","be","like","i",
+            "want","need","looking","for","to","buy","get","find","some","any",
+            "car","cars","vehicle","vehicles","one","with","and","or","can",
+        }
+
         tokens = search.strip().split()
         leftover_tokens = []
         smart_filters: list = []
 
         for tok in tokens:
+            tok = tok.strip(".,!?;:()[]\"'")
+            if not tok:
+                continue
             low = tok.lower()
             if low.isdigit() and len(low) == 4 and 1980 <= int(low) <= 2035:
                 smart_filters.append({"year": int(low)})
+                understood_filters.append({"type": "year", "label": low})
+            elif low in BRAND_WORDS:
+                smart_filters.append({"brand": {"$regex": re.escape(BRAND_WORDS[low]), "$options": "i"}})
+                understood_filters.append({"type": "brand", "label": BRAND_WORDS[low]})
             elif low in CONDITION_WORDS:
                 smart_filters.append({"condition": {"$regex": CONDITION_WORDS[low], "$options": "i"}})
+                understood_filters.append({"type": "condition", "label": tok.capitalize()})
             elif low in FUEL_WORDS:
                 smart_filters.append({"fuelType": {"$regex": FUEL_WORDS[low], "$options": "i"}})
+                understood_filters.append({"type": "fuel", "label": tok.capitalize()})
             elif low in TRANSMISSION_WORDS:
                 smart_filters.append({"transmission": {"$regex": TRANSMISSION_WORDS[low], "$options": "i"}})
+                understood_filters.append({"type": "transmission", "label": tok.capitalize()})
             elif low in STATUS_WORDS:
                 query["status"] = STATUS_WORDS[low]  # overrides the default "available" status param
+                understood_filters.append({"type": "status", "label": tok.capitalize()})
             elif low in STATE_WORDS:
                 smart_filters.append({"state": {"$regex": STATE_WORDS[low], "$options": "i"}})
+                understood_filters.append({"type": "state", "label": STATE_WORDS[low]})
+            elif low in SEARCH_STOPWORDS:
+                continue  # generic filler — drop entirely, not even kept as leftover
             else:
                 leftover_tokens.append(tok)
 
         if smart_filters:
             query["$and"] = query.get("$and", []) + smart_filters
 
-        leftover = " ".join(leftover_tokens).strip()
-        if leftover:
-            query["$or"] = [
-                {"brand": {"$regex": leftover, "$options": "i"}},
-                {"model": {"$regex": leftover, "$options": "i"}},
-                {"color": {"$regex": leftover, "$options": "i"}},
-                {"carId": {"$regex": leftover, "$options": "i"}},
-                {"description": {"$regex": leftover, "$options": "i"}},
+        if leftover_tokens:
+            # Each remaining meaningful word must match SOMEWHERE
+            # (brand, model, color, carId, or description) — not the
+            # whole leftover phrase as one literal substring, which
+            # would fail to match almost any real car the moment
+            # there's more than one leftover word.
+            leftover_conditions = [
+                {"$or": [
+                    {"brand": {"$regex": re.escape(tok), "$options": "i"}},
+                    {"model": {"$regex": re.escape(tok), "$options": "i"}},
+                    {"color": {"$regex": re.escape(tok), "$options": "i"}},
+                    {"carId": {"$regex": re.escape(tok), "$options": "i"}},
+                    {"description": {"$regex": re.escape(tok), "$options": "i"}},
+                ]}
+                for tok in leftover_tokens
             ]
+            query["$and"] = query.get("$and", []) + leftover_conditions
+            understood_filters.append({"type": "keyword", "label": " ".join(leftover_tokens)})
 
     if brand:
         query["brand"] = {"$regex": brand, "$options": "i"}
@@ -311,7 +357,7 @@ async def public_car_feed(
             s["state"] = car.get("state") or dealer.get("state")
         result.append(s)
 
-    return {"total": total, "cars": result, "skip": skip, "limit": limit}
+    return {"total": total, "cars": result, "skip": skip, "limit": limit, "understoodFilters": understood_filters}
 
 
 @router.get("/cars/{car_id}")
