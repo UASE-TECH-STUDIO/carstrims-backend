@@ -150,6 +150,7 @@ async def send_fcm_push_to_user(
                                     "icon": "ic_launcher",
                                     "color": "#F47B20",
                                     "sound": "default",
+                                    "channel_id": "carstrims_default",
                                     "click_action": "FLUTTER_NOTIFICATION_CLICK",
                                 },
                             },
