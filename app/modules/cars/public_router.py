@@ -77,6 +77,8 @@ async def public_car_feed(
     year_from: Optional[int] = Query(None),
     year_to: Optional[int] = Query(None),
     color: Optional[str] = Query(None),
+    max_mileage: Optional[float] = Query(None),
+    promo_only: Optional[bool] = Query(None),
     sort: Optional[str] = Query("newest"),
     skip: int = Query(0),
     limit: int = Query(20),
@@ -358,6 +360,10 @@ async def public_car_feed(
         query["fuelType"] = {"$regex": fuel_type, "$options": "i"}
     if color:
         query["color"] = {"$regex": color, "$options": "i"}
+    if max_mileage is not None:
+        query["mileage"] = {"$lte": max_mileage}
+    if promo_only:
+        query["promoPrice"] = {"$exists": True, "$ne": None, "$gt": 0}
     if city:
         query["$or"] = query.get("$or", []) + [
             {"city": {"$regex": city, "$options": "i"}},
