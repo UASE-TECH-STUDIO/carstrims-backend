@@ -21,6 +21,7 @@ SYSTEM_PROMPT = """You are the search-understanding engine for CARSTRIMS, a Nige
 Given the person's text, return ONLY a JSON object (no other text) with this exact shape:
 {
   "intent": "search_cars" | "search_dealers" | "search_people" | "unclear",
+  "vehicleType": "car" | "motorcycle" | "tricycle" | "truck" | "bus" | "van" | null,
   "brand": string or null,
   "model": string or null,
   "yearFrom": integer or null,
@@ -39,6 +40,7 @@ Given the person's text, return ONLY a JSON object (no other text) with this exa
 
 Rules:
 - "neatly used" / "clean" / "tokunbo" / "belgium" all commonly mean "foreign used" in Nigerian car-shopping language — map them to condition "foreign used" unless context says otherwise.
+- Vehicle type slang: "okada" or "bike" means motorcycle. "keke" or "napep" means tricycle. "lorry" means truck. Leave vehicleType null if the person doesn't specify — this app defaults to showing cars, not because they typed "car" but because that's most listings; only set vehicleType when they actually indicate a type.
 - Price expressed as "3.5-6.5million", "3.5m to 6.5m" etc. means priceMinNgn=3500000, priceMaxNgn=6500000. "under 10m" means priceMaxNgn=10000000 only. "around 5m" means roughly priceMinNgn=4000000, priceMaxNgn=6000000.
 - If the person is clearly asking to find a DEALER or PERSON by name or location ("looking for a dealer named Musa in Abuja", "dealers in Lagos"), set intent to "search_dealers" (or "search_people" if clearly not business-related), fill personOrDealerName and/or state, and leave car-specific fields null.
 - If nothing meaningful can be extracted, set intent to "unclear" and leave everything else null.

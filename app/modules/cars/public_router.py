@@ -78,6 +78,7 @@ async def public_car_feed(
     year_to: Optional[int] = Query(None),
     color: Optional[str] = Query(None),
     max_mileage: Optional[float] = Query(None),
+    vehicle_type: Optional[str] = Query(None),
     promo_only: Optional[bool] = Query(None),
     sort: Optional[str] = Query("newest"),
     skip: int = Query(0),
@@ -106,6 +107,13 @@ async def public_car_feed(
 
             def _clean_str(v):
                 return v.strip() if isinstance(v, str) and v.strip() else None
+
+            vtype_val = _clean_str(ai_result.get("vehicleType"))
+            if vtype_val in ("car", "motorcycle", "tricycle", "truck", "bus", "van"):
+                if vtype_val == "car":
+                    ai_filters.append({"$or": [{"vehicleType": "car"}, {"vehicleType": {"$exists": False}}, {"vehicleType": None}]})
+                else:
+                    ai_filters.append({"vehicleType": vtype_val})
 
             brand_val = _clean_str(ai_result.get("brand"))
             if brand_val:
@@ -284,6 +292,14 @@ async def public_car_feed(
         STATUS_WORDS = {"available": "available", "sold": "sold"}
         STATE_WORDS = {s.lower(): s for s in ["Abuja","Lagos","Kano","Rivers","Oyo","Kaduna","Anambra","Enugu","Delta","Ogun","Imo","Ondo","Kwara","Benue","Edo","Ekiti","Cross River"]}
         COLOR_WORDS = {c.lower(): c for c in ["Black","White","Silver","Grey","Gray","Red","Blue","Green","Gold","Brown","Beige","Maroon","Orange","Yellow","Purple","Wine","Cream","Navy"]}
+        VEHICLE_TYPE_WORDS = {
+            "car": "car", "cars": "car",
+            "motorcycle": "motorcycle", "motorbike": "motorcycle", "bike": "motorcycle", "okada": "motorcycle",
+            "tricycle": "tricycle", "keke": "tricycle", "napep": "tricycle",
+            "truck": "truck", "lorry": "truck",
+            "bus": "bus", "minibus": "bus",
+            "van": "van",
+        }
 
         # Generic English filler that doesn't carry car-shopping
         # meaning ("that is it should be like", "I want to buy", "a
@@ -292,7 +308,7 @@ async def public_car_feed(
         SEARCH_STOPWORDS = {
             "a","an","the","that","this","is","are","it","should","be","like","i",
             "want","need","looking","for","to","buy","get","find","some","any",
-            "car","cars","vehicle","vehicles","one","with","and","or","can",
+            "vehicle","vehicles","one","with","and","or","can",
             "colour","color","range","within","from","of","in","having",
         }
 
@@ -329,6 +345,13 @@ async def public_car_feed(
             elif low in COLOR_WORDS:
                 smart_filters.append({"color": {"$regex": COLOR_WORDS[low], "$options": "i"}})
                 understood_filters.append({"type": "color", "label": COLOR_WORDS[low], "matchedText": tok})
+            elif low in VEHICLE_TYPE_WORDS:
+                vt = VEHICLE_TYPE_WORDS[low]
+                if vt == "car":
+                    smart_filters.append({"$or": [{"vehicleType": "car"}, {"vehicleType": {"$exists": False}}, {"vehicleType": None}]})
+                else:
+                    smart_filters.append({"vehicleType": vt})
+                understood_filters.append({"type": "vehicleType", "label": vt.capitalize(), "matchedText": tok})
             elif low in SEARCH_STOPWORDS:
                 continue  # generic filler — drop entirely, not even kept as leftover
             else:
@@ -364,6 +387,22 @@ async def public_car_feed(
         query["mileage"] = {"$lte": max_mileage}
     if promo_only:
         query["promoPrice"] = {"$exists": True, "$ne": None, "$gt": 0}
+    if vehicle_type:
+        # Existing listings have no vehicleType field at all (added
+        # after they were created) - since they're all cars, treat a
+        # missing field as "car" too, rather than hiding them from a
+        # "car" filter just because they predate this field. Uses
+        # $and with a nested $or (not the top-level $or) since city
+        # below also needs the top-level $or for its own purposes -
+        # merging both into one $or would incorrectly treat "matches
+        # this city" and "is a car" as interchangeable alternatives
+        # instead of both being required.
+        if vehicle_type == "car":
+            query["$and"] = query.get("$and", []) + [
+                {"$or": [{"vehicleType": "car"}, {"vehicleType": {"$exists": False}}, {"vehicleType": None}]}
+            ]
+        else:
+            query["vehicleType"] = vehicle_type
     if city:
         query["$or"] = query.get("$or", []) + [
             {"city": {"$regex": city, "$options": "i"}},

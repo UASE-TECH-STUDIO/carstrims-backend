@@ -38,6 +38,7 @@ async def create_car(dealer_id: str, user_id: str, data: dict) -> dict:
         "dealerDealerId": dealer.get("dealerId"),
         "ownerId": data.get("ownerId", str(dealer["_id"])),
         "ownerType": data.get("ownerType", "dealer"),
+        "vehicleType": data.get("vehicleType") or "car",
         "brand": data.get("brand"),
         "model": data.get("model"),
         "year": data.get("year"),

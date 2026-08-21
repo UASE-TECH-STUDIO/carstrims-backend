@@ -3,6 +3,7 @@ from typing import Optional
 
 
 class CarCreateRequest(BaseModel):
+    vehicleType: Optional[str] = "car"  # car, motorcycle, tricycle, bus, truck, van
     brand: str
     model: str
     year: int
@@ -25,6 +26,7 @@ class CarCreateRequest(BaseModel):
 
 
 class CarUpdateRequest(BaseModel):
+    vehicleType: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     year: Optional[int] = None
