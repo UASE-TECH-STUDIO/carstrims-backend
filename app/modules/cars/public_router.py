@@ -5,6 +5,7 @@ from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.utils.qr_service import generate_dealer_qr, get_dealer_qr
 from app.utils.comments_service import add_comment, get_car_comments, delete_comment, add_reply
 from app.utils.ai_search_service import parse_search_with_ai
+from app.utils.nav_search_service import match_navigation_with_ai
 from app.modules.users.user_service import toggle_like, get_user_likes, add_favorite, remove_favorite
 from app.modules.cars.service import get_public_cars, get_car_by_id
 from app.database.connection import get_db
@@ -660,6 +661,34 @@ async def universal_search(
         results["users"] = [serialize_doc(u) for u in users]
 
     return results
+
+
+@router.post("/navigation-match")
+async def navigation_match(
+    payload: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    AI-backed navigation intent matching for the "tell it what you
+    want to do" search — understands whatever phrasing, dialect, or
+    mixed language someone uses and matches it against their own
+    role's actual available pages, which the frontend sends on every
+    call rather than this endpoint keeping its own possibly-stale
+    copy of the app's page structure.
+
+    Falls back to signaling unavailability rather than erroring, so
+    the frontend's own local keyword/fuzzy matcher can take over
+    seamlessly if the AI call isn't available for any reason.
+    """
+    text = (payload.get("text") or "").strip()
+    entries = payload.get("entries") or []
+    if not text or not entries:
+        return {"available": False, "matches": [], "understood": ""}
+
+    result = await match_navigation_with_ai(text, entries)
+    if result is None:
+        return {"available": False, "matches": [], "understood": ""}
+    return {"available": True, **result}
 
 
 @router.get("/dealers")
