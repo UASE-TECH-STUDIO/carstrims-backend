@@ -456,7 +456,7 @@ async def public_car_feed(
         #    posting a lot doesn't dominate several consecutive feed
         #    slots, while dealers with generally higher-scoring cars
         #    still get interleaved earlier in each round.
-        candidates = await db["car_listings"].find(query).sort("createdAt", -1).limit(500).to_list(500)
+        candidates = await db["car_listings"].find(query).sort("createdAt", -1).limit(3000).to_list(3000)
 
         now = datetime.utcnow()
         effective_seed = seed or "default-seed"
@@ -470,7 +470,7 @@ async def public_car_feed(
             recency = 10000.0 if age_hours <= 2 else 100.0 * math.exp(-0.008 * age_hours)
             engagement = (c.get("viewCount", 0) or 0) * 0.3 + (c.get("likeCount", 0) or 0) * 2.0
             h = hashlib.md5(f"{effective_seed}:{c.get('carId','')}".encode()).hexdigest()
-            jitter = (int(h[:8], 16) / 0xFFFFFFFF) * 15
+            jitter = (int(h[:8], 16) / 0xFFFFFFFF) * 300
 
             # Soft boost for leftover descriptive words ("neatly used",
             # "not more than a year", etc.) — checked against the
