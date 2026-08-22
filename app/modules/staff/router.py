@@ -332,9 +332,28 @@ async def delete_staff(staff_id: str, current_user: dict = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Not found")
 
     await db["staff_accounts"].delete_one({"_id": staff["_id"]})
-    if staff.get("userId"):
+
+    user_id = staff.get("userId")
+    if user_id:
+        # Soft-delete the account itself (kept, not hard-deleted) so
+        # past records that reference this staff member by ID -
+        # sales they logged, cars they added, movements they recorded
+        # - still display correctly rather than showing a broken
+        # reference. Those business records belong to the DEALER's
+        # business regardless of which staff member entered them, and
+        # are deliberately left completely untouched here.
         await db["users"].update_one(
-            {"_id": ObjectId(staff["userId"])},
+            {"_id": ObjectId(user_id)},
             {"$set": {"status": "deleted", "role": "DELETED"}},
         )
+
+        # What IS genuinely personal to this staff member as a person
+        # (not the dealer's business) gets actually removed: their own
+        # notifications, and their own device/push registrations, so
+        # they stop receiving anything and their notification history
+        # doesn't linger after removal.
+        await db["notifications"].delete_many({"receiverId": user_id})
+        await db["device_tokens"].delete_many({"userId": user_id})
+        await db["push_subscriptions"].delete_many({"userId": user_id})
+
     return {"message": "Staff removed"}
