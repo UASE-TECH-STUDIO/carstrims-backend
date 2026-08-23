@@ -579,6 +579,41 @@ async def public_car_detail(car_id: str):
     return serialized
 
 
+@router.get("/cars/{car_id}/meta")
+async def public_car_meta(car_id: str):
+    """
+    Minimal, view-count-safe car lookup for server-side Open Graph tag
+    generation only. Deliberately does NOT call the full detail
+    endpoint above or its view-increment side effect - this runs on
+    every page load (including social media crawlers fetching link
+    previews, which don't count as real views), and reusing the
+    view-incrementing endpoint here would double-count every real
+    view too, since the client component fetches the full detail
+    again after this metadata fetch completes.
+    """
+    db = get_db()
+    if ObjectId.is_valid(car_id):
+        car = await db["car_listings"].find_one({"_id": ObjectId(car_id), "status": {"$ne": "draft"}})
+    else:
+        car = await db["car_listings"].find_one({"carId": car_id, "status": {"$ne": "draft"}})
+
+    if not car:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Car not found")
+
+    images = car.get("images") or []
+    return {
+        "brand": car.get("brand"),
+        "model": car.get("model"),
+        "year": car.get("year"),
+        "sellingPrice": car.get("sellingPrice"),
+        "city": car.get("city"),
+        "state": car.get("state"),
+        "description": car.get("description"),
+        "image": images[0] if images else None,
+    }
+
+
 @router.get("/search")
 async def universal_search(
     q: str = Query(..., min_length=1),
