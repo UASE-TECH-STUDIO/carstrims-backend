@@ -540,6 +540,52 @@ async def admin_upload_dealer_doc(
     return {"url": url, "field": field}
 
 
+@router.delete("/dealers/{dealer_id}/remove-doc")
+async def admin_remove_dealer_doc(
+    dealer_id: str,
+    doc_type: str = Query(...),
+    admin=Depends(require_admin),
+):
+    """
+    Clears an uploaded dealer document so admin can remove a wrong
+    upload, or clear it to make way for a replacement (the upload UI
+    only shows an empty upload slot when the field is unset - clearing
+    it here is what lets a fresh upload happen in its place).
+
+    Does not delete the file from Cloudinary itself - only clears the
+    reference on the dealer/user record. Leaving the original file in
+    storage is deliberate: safer than an irreversible delete if this
+    was clicked by mistake, and Cloudinary storage cost for a handful
+    of document images is negligible compared to the risk of losing a
+    legitimate document permanently.
+    """
+    field = _DEALER_DOC_TYPE_FIELDS.get(doc_type)
+    if not field:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Unknown doc_type: {doc_type}")
+
+    db = get_db()
+    q = {"_id": ObjectId(dealer_id)} if ObjectId.is_valid(dealer_id) else {"dealerId": dealer_id}
+    dealer = await db["dealer_organizations"].find_one(q)
+    if not dealer:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Dealer not found")
+
+    await db["dealer_organizations"].update_one(
+        {"_id": dealer["_id"]}, {"$set": {field: None, "updatedAt": datetime.utcnow()}}
+    )
+
+    # Same cascade as upload - keep the linked user account in sync
+    # regardless of which page the removal happened from.
+    if dealer.get("userId") and ObjectId.is_valid(dealer["userId"]):
+        await db["users"].update_one(
+            {"_id": ObjectId(dealer["userId"])},
+            {"$set": {field: None, "updatedAt": datetime.utcnow()}}
+        )
+
+    return {"field": field, "removed": True}
+
+
 @router.post("/users/{user_id}/restrict-profile-field")
 async def restrict_profile_field(user_id: str, data: dict = Body({}), admin=Depends(require_admin)):
     db = get_db()
