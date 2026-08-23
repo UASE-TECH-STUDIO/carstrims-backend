@@ -788,6 +788,35 @@ async def public_dealer_profile(dealer_id: str):
     return result
 
 
+@router.get("/dealers/{dealer_id}/meta")
+async def public_dealer_meta(dealer_id: str):
+    """
+    Minimal lookup for server-side Open Graph tag generation only -
+    same reasoning as /cars/{car_id}/meta. The full dealer profile
+    endpoint above does real work a link preview never needs (fetches
+    up to 20 cars, counts followers, merges owner social links) - this
+    runs on every page load including crawler fetches, so keeping it
+    minimal avoids that load for something that's purely cosmetic.
+    """
+    db = get_db()
+    if ObjectId.is_valid(dealer_id):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(dealer_id)})
+    else:
+        dealer = await db["dealer_organizations"].find_one({"dealerId": dealer_id})
+
+    if not dealer:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Dealer not found")
+
+    return {
+        "companyName": dealer.get("companyName"),
+        "logo": dealer.get("logo"),
+        "city": dealer.get("city"),
+        "state": dealer.get("state"),
+        "description": dealer.get("description"),
+    }
+
+
 #  PUBLIC USER PROFILE 
 # This is what the frontend /users/[userId] page calls
 
@@ -858,6 +887,34 @@ async def public_user_profile(user_id: str):
         profile["stats"] = {"totalCars": total_cars, "totalDealers": total_dealers}
 
     return profile
+
+
+@router.get("/users/{user_id}/meta")
+async def public_user_meta(user_id: str):
+    """
+    Minimal lookup for server-side Open Graph tag generation only -
+    same reasoning as the car and dealer meta endpoints. Avoids the
+    dealer/partner-stats lookups the full profile endpoint above does,
+    which a link preview never needs.
+    """
+    db = get_db()
+    user = None
+    if ObjectId.is_valid(user_id):
+        user = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not user:
+        user = await db["users"].find_one({"userId": user_id})
+
+    if not user:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "fullName": user.get("fullName"),
+        "avatar": user.get("avatar") or user.get("profilePicture"),
+        "city": user.get("city"),
+        "state": user.get("state"),
+        "bio": user.get("bio"),
+    }
 
 
 #  QR CODE 
