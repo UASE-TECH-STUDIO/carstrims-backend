@@ -72,6 +72,7 @@ async def add_reply(user_id: str, comment_id: str, text: str) -> dict:
         "replyId": "RPL-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6)),
         "userId": user_id,
         "userName": user.get("fullName", "Anonymous") if user else "Anonymous",
+        "userPic": user.get("profilePicture") if user else None,
         "text": text,
         "createdAt": datetime.utcnow().isoformat(),
     }
