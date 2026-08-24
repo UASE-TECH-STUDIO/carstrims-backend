@@ -42,6 +42,14 @@ class StaffPermission(str, Enum):
     # Requests
     VIEW_REQUESTS   = "view_requests"
     MANAGE_REQUESTS = "manage_requests"
+    # Design Studio (branding documents) - deliberately split into
+    # separate permissions rather than one combined toggle: ID cards
+    # carry staff personal data, so a dealer may want to let someone
+    # generate marketing flyers without also letting them generate ID
+    # cards for other staff members.
+    GENERATE_ID_CARDS = "generate_id_cards"
+    GENERATE_MARKETING_MATERIALS = "generate_marketing_materials"
+    GENERATE_BUSINESS_DOCS = "generate_business_docs"
 
 
 class StaffStatus(str, Enum):
