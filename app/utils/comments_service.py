@@ -30,6 +30,7 @@ async def add_comment(user_id: str, car_id: str, text: str) -> dict:
 
     result = await db["car_comments"].insert_one(comment_doc)
     comment_doc["_id"] = result.inserted_id
+    await db["car_listings"].update_one({"carId": car_id}, {"$inc": {"commentCount": 1}})
     return serialize_doc(comment_doc)
 
 
@@ -58,6 +59,7 @@ async def delete_comment(comment_id: str, user_id: str, is_admin: bool = False) 
     if not is_admin and comment["userId"] != user_id:
         raise HTTPException(status_code=403, detail="You can only delete your own comments")
     await db["car_comments"].delete_one({"commentId": comment_id})
+    await db["car_listings"].update_one({"carId": comment["carId"]}, {"$inc": {"commentCount": -1}})
     return {"message": "Comment deleted"}
 
 
