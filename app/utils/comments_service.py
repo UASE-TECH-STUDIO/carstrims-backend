@@ -82,3 +82,38 @@ async def add_reply(user_id: str, comment_id: str, text: str) -> dict:
         {"$push": {"replies": reply}},
     )
     return {"message": "Reply added", "reply": reply}
+
+
+async def toggle_comment_like(user_id: str, comment_id: str) -> dict:
+    """Same pattern as toggle_like() for cars: a separate collection
+    tracks (userId, commentId) pairs so a user can't like the same
+    comment twice, with the comment's own likes counter kept in sync
+    via $inc rather than recounting the tracking collection on every
+    read."""
+    db = get_db()
+    comment = await db["car_comments"].find_one({"commentId": comment_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    existing = await db["comment_likes"].find_one({"userId": user_id, "commentId": comment_id})
+    if existing:
+        await db["comment_likes"].delete_one({"userId": user_id, "commentId": comment_id})
+        await db["car_comments"].update_one({"commentId": comment_id}, {"$inc": {"likes": -1}})
+        return {"liked": False}
+    else:
+        await db["comment_likes"].insert_one({
+            "userId": user_id, "commentId": comment_id, "createdAt": datetime.utcnow(),
+        })
+        await db["car_comments"].update_one({"commentId": comment_id}, {"$inc": {"likes": 1}})
+        return {"liked": True}
+
+
+async def get_comment_like_status(user_id: str, comment_ids: list) -> list:
+    """Bulk lookup so the frontend can mark which of a whole page of
+    comments the current user has already liked in one request,
+    rather than one request per comment."""
+    db = get_db()
+    liked = await db["comment_likes"].find(
+        {"userId": user_id, "commentId": {"$in": comment_ids}}
+    ).to_list(len(comment_ids))
+    return [l["commentId"] for l in liked]
