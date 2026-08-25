@@ -1080,9 +1080,73 @@ async def top_dealers(limit: int = Query(10), admin=Depends(require_admin)):
 
 @router.get("/activity")
 async def activity_log(skip: int = Query(0), limit: int = Query(50), admin=Depends(require_admin)):
+    """Was returning only the notifications collection - but those
+    are private, receiver-scoped messages (a suspension notice sent
+    to one specific dealer, a warning sent to one specific user),
+    not meaningful platform-wide events. That's exactly why this
+    widget looked broken/unhelpful: an admin activity feed showing
+    individual people's private notices instead of things like new
+    signups, new listings, and completed sales.
+
+    Now merges genuine platform events (new dealer registrations, new
+    car listings, completed sales) together with the existing
+    notifications, all normalized to the same {type, title, message,
+    createdAt} shape the frontend already expects - so no frontend
+    change was needed, this was purely a backend data-source bug.
+
+    Merges in Python rather than a single Mongo query since these are
+    four separate collections - fetches a generous multiple of the
+    requested page size from each source (enough to cover skip+limit
+    even if one source dominates), sorts the combined set by
+    createdAt, then slices to the requested page. Fine for an admin
+    activity feed people mostly check for what's recent, not for deep
+    pagination through platform history.
+    """
     db = get_db()
-    docs = await db["notifications"].find({}).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
-    return {"activities": [serialize_doc(d) for d in docs]}
+    fetch_n = skip + limit + 20
+
+    notif_docs = await db["notifications"].find({}).sort("createdAt", -1).limit(fetch_n).to_list(fetch_n)
+    dealer_docs = await db["dealer_organizations"].find({}).sort("createdAt", -1).limit(fetch_n).to_list(fetch_n)
+    car_docs = await db["car_listings"].find({}).sort("createdAt", -1).limit(fetch_n).to_list(fetch_n)
+    sale_docs = await db["sale_transactions"].find({}).sort("createdAt", -1).limit(fetch_n).to_list(fetch_n)
+
+    events = []
+    for d in notif_docs:
+        s = serialize_doc(d)
+        events.append({
+            "_id": s.get("_id"), "type": s.get("type", "general"),
+            "title": s.get("title"), "message": s.get("message"),
+            "receiverId": s.get("receiverId"), "createdAt": s.get("createdAt"),
+        })
+    for d in dealer_docs:
+        s = serialize_doc(d)
+        events.append({
+            "_id": s.get("_id"), "type": "new_dealer",
+            "title": "New Dealer Registered", "message": s.get("companyName", "A new dealer joined the platform"),
+            "createdAt": s.get("createdAt"),
+        })
+    for d in car_docs:
+        s = serialize_doc(d)
+        events.append({
+            "_id": s.get("_id"), "type": "new_listing",
+            "title": "New Vehicle Listed",
+            "message": f"{s.get('brand','')} {s.get('model','')} {s.get('year','')}".strip(),
+            "createdAt": s.get("createdAt"),
+        })
+    for d in sale_docs:
+        s = serialize_doc(d)
+        price = s.get("sellingPrice")
+        price_text = f"NGN {int(price):,}" if price else ""
+        events.append({
+            "_id": s.get("_id"), "type": "sale_completed",
+            "title": "Vehicle Sold",
+            "message": f"{s.get('carBrand','')} {s.get('carModel','')} {s.get('carYear','')} {price_text}".strip(),
+            "createdAt": s.get("createdAt"),
+        })
+
+    events.sort(key=lambda e: e.get("createdAt") or "", reverse=True)
+    page = events[skip:skip + limit]
+    return {"activities": page}
 
 
 #  CREATE DEALER
