@@ -119,3 +119,38 @@ async def get_comment_like_status(user_id: str, comment_ids: list) -> list:
         {"userId": user_id, "commentId": {"$in": comment_ids}}
     ).to_list(len(comment_ids))
     return [l["commentId"] for l in liked]
+
+
+async def backfill_comment_counts() -> int:
+    """One-time-per-startup backfill for the commentCount field added
+    after cars/comments already existed - without this, any car with
+    comments posted before that field existed would show 0 forever,
+    since the $inc-on-post/delete approach only keeps a count in sync
+    going forward, not retroactively.
+
+    Idempotent by construction (always recomputes the real count from
+    car_comments rather than blindly incrementing), so it's safe to
+    run on every startup rather than needing a one-shot migration
+    flag - a car with the correct count already set just gets set to
+    the same value again.
+
+    Uses an aggregation pipeline + a single bulk_write rather than a
+    per-document loop, so this stays cheap even as the collection
+    grows - one grouped count query plus one bulk update, not N
+    round trips."""
+    from pymongo import UpdateOne
+
+    db = get_db()
+    counts = await db["car_comments"].aggregate([
+        {"$group": {"_id": "$carId", "count": {"$sum": 1}}}
+    ]).to_list(None)
+
+    if not counts:
+        return 0
+
+    ops = [
+        UpdateOne({"carId": c["_id"]}, {"$set": {"commentCount": c["count"]}})
+        for c in counts
+    ]
+    result = await db["car_listings"].bulk_write(ops, ordered=False)
+    return result.modified_count

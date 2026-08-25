@@ -40,6 +40,15 @@ except Exception:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_db()
+    try:
+        from app.utils.comments_service import backfill_comment_counts
+        await backfill_comment_counts()
+    except Exception:
+        # A backfill failure should never prevent the app from
+        # starting - commentCount would just stay at whatever it
+        # already was (0 or unset) for affected cars until the next
+        # successful startup, not a reason to take the whole API down.
+        pass
     yield
     await close_db()
 
