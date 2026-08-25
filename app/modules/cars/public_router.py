@@ -3,7 +3,7 @@ from typing import Optional
 from app.auth.dependencies import get_current_user, get_current_dealer, get_current_dealer_or_staff
 from app.modules.dealers.service import get_dealer_by_user_id, serialize_doc
 from app.utils.qr_service import generate_dealer_qr, get_dealer_qr
-from app.utils.comments_service import add_comment, get_car_comments, delete_comment, add_reply, toggle_comment_like, get_comment_like_status
+from app.utils.comments_service import add_comment, get_car_comments, delete_comment, add_reply, toggle_comment_like, get_comment_like_status, toggle_reply_like, get_reply_like_status
 from app.utils.ai_search_service import parse_search_with_ai
 from app.utils.nav_search_service import match_navigation_with_ai
 from app.modules.users.user_service import toggle_like, get_user_likes, add_favorite, remove_favorite
@@ -1060,4 +1060,25 @@ async def my_comment_likes(
 ):
     ids = [c.strip() for c in comment_ids.split(",") if c.strip()]
     liked = await get_comment_like_status(str(current_user["_id"]), ids)
+    return {"liked": liked}
+
+
+@router.post("/cars/{car_id}/comments/{comment_id}/replies/{reply_id}/like")
+async def like_reply(
+    car_id: str,
+    comment_id: str,
+    reply_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    return await toggle_reply_like(str(current_user["_id"]), comment_id, reply_id)
+
+
+@router.get("/cars/{car_id}/comments/replies/likes/me")
+async def my_reply_likes(
+    car_id: str,
+    reply_ids: str = Query(..., description="Comma-separated replyId list to check in one request"),
+    current_user: dict = Depends(get_current_user),
+):
+    ids = [r.strip() for r in reply_ids.split(",") if r.strip()]
+    liked = await get_reply_like_status(str(current_user["_id"]), ids)
     return {"liked": liked}

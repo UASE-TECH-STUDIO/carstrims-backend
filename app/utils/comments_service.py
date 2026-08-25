@@ -76,6 +76,7 @@ async def add_reply(user_id: str, comment_id: str, text: str) -> dict:
         "userName": user.get("fullName", "Anonymous") if user else "Anonymous",
         "userPic": user.get("profilePicture") if user else None,
         "text": text,
+        "likes": 0,
         "createdAt": datetime.utcnow().isoformat(),
     }
 
@@ -108,6 +109,47 @@ async def toggle_comment_like(user_id: str, comment_id: str) -> dict:
         })
         await db["car_comments"].update_one({"commentId": comment_id}, {"$inc": {"likes": 1}})
         return {"liked": True}
+
+
+async def toggle_reply_like(user_id: str, comment_id: str, reply_id: str) -> dict:
+    """Same pattern as toggle_comment_like, one level deeper: replies
+    live as subdocuments inside a comment's replies array rather than
+    their own collection, so updating a specific reply's like count
+    uses Mongo's positional $ operator against a query that matches
+    both the parent comment and the specific reply by replyId, rather
+    than a plain top-level update."""
+    db = get_db()
+    comment = await db["car_comments"].find_one({"commentId": comment_id, "replies.replyId": reply_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Reply not found")
+
+    existing = await db["reply_likes"].find_one({"userId": user_id, "replyId": reply_id})
+    if existing:
+        await db["reply_likes"].delete_one({"userId": user_id, "replyId": reply_id})
+        await db["car_comments"].update_one(
+            {"commentId": comment_id, "replies.replyId": reply_id},
+            {"$inc": {"replies.$.likes": -1}},
+        )
+        return {"liked": False}
+    else:
+        await db["reply_likes"].insert_one({
+            "userId": user_id, "replyId": reply_id, "commentId": comment_id, "createdAt": datetime.utcnow(),
+        })
+        await db["car_comments"].update_one(
+            {"commentId": comment_id, "replies.replyId": reply_id},
+            {"$inc": {"replies.$.likes": 1}},
+        )
+        return {"liked": True}
+
+
+async def get_reply_like_status(user_id: str, reply_ids: list) -> list:
+    """Bulk lookup, same reasoning as get_comment_like_status - one
+    request for every reply on a page rather than one per reply."""
+    db = get_db()
+    liked = await db["reply_likes"].find(
+        {"userId": user_id, "replyId": {"$in": reply_ids}}
+    ).to_list(len(reply_ids))
+    return [l["replyId"] for l in liked]
 
 
 async def get_comment_like_status(user_id: str, comment_ids: list) -> list:
