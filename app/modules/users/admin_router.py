@@ -451,6 +451,7 @@ async def unmute_car(car_id: str, admin=Depends(require_admin)):
 @router.get("/users")
 async def list_users(
     role: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     skip: int = Query(0), limit: int = Query(20),
     search: Optional[str] = Query(None),
     admin=Depends(require_admin),
@@ -459,6 +460,8 @@ async def list_users(
     query: dict = {}
     if role and role != "all":
         query["role"] = role
+    if status and status != "all":
+        query["status"] = status
     if search:
         query["$or"] = [
             {"fullName": {"$regex": search, "$options": "i"}},
