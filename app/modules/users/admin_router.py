@@ -367,6 +367,86 @@ async def list_all_cars(
     return {"total": total, "cars": enriched}
 
 
+async def _get_car_and_dealer(car_id: str, db):
+    q = {"_id": ObjectId(car_id)} if ObjectId.is_valid(car_id) else {"carId": car_id}
+    car = await db["car_listings"].find_one(q)
+    if not car:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Car not found")
+    dealer = None
+    if ObjectId.is_valid(car.get("dealerId", "")):
+        dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(car["dealerId"])})
+    return car, dealer, q
+
+
+async def _notify_dealer_about_car(dealer, title: str, message: str):
+    """Same notification + best-effort push pattern already used for
+    suspend_dealer/warn_dealer above - kept as a shared helper here
+    since every car moderation action below needs the identical
+    steps, just with a different title/message."""
+    if not dealer or not dealer.get("userId"):
+        return
+    db = get_db()
+    await db["notifications"].insert_one({
+        "receiverId": dealer["userId"], "type": "general",
+        "title": title, "message": message,
+        "isRead": False, "createdAt": datetime.utcnow(),
+    })
+    try:
+        import asyncio as _asyncio
+        from app.modules.notifications.push_service import send_web_push_to_user as _swpu
+        _asyncio.create_task(_swpu(dealer["userId"], title, message, "/dashboard"))
+    except Exception:
+        pass
+
+
+@router.post("/cars/{car_id}/hide")
+async def hide_car(car_id: str, data: dict = Body({}), admin=Depends(require_admin)):
+    """Removes a listing from the public feed without deleting it -
+    the dealer keeps it in their own inventory and can see exactly
+    why it was taken down, ready to be re-published once addressed."""
+    db = get_db()
+    car, dealer, q = await _get_car_and_dealer(car_id, db)
+    note = data.get("note", "This listing has been hidden from the public feed pending review.")
+    await db["car_listings"].update_one(q, {"$set": {"adminHidden": True, "adminHiddenNote": note, "updatedAt": datetime.utcnow()}})
+    await _notify_dealer_about_car(dealer, "Vehicle Listing Hidden", f"{car.get('brand','')} {car.get('model','')}: {note}")
+    return {"message": "Car hidden"}
+
+
+@router.post("/cars/{car_id}/unhide")
+async def unhide_car(car_id: str, admin=Depends(require_admin)):
+    """Re-publishes a previously hidden listing back to the public
+    feed."""
+    db = get_db()
+    car, dealer, q = await _get_car_and_dealer(car_id, db)
+    await db["car_listings"].update_one(q, {"$set": {"adminHidden": False, "updatedAt": datetime.utcnow()}, "$unset": {"adminHiddenNote": ""}})
+    await _notify_dealer_about_car(dealer, "Vehicle Listing Re-published", f"{car.get('brand','')} {car.get('model','')} is visible on the public feed again.")
+    return {"message": "Car unhidden"}
+
+
+@router.post("/cars/{car_id}/mute")
+async def mute_car(car_id: str, data: dict = Body({}), admin=Depends(require_admin)):
+    """Disables further comments on a specific listing - the car
+    stays visible and purchasable, only new comments are blocked.
+    Less severe than hiding: for a listing whose discussion needs
+    moderating, not the listing itself."""
+    db = get_db()
+    car, dealer, q = await _get_car_and_dealer(car_id, db)
+    note = data.get("note", "Comments have been disabled on this listing.")
+    await db["car_listings"].update_one(q, {"$set": {"adminMuted": True, "adminMutedNote": note, "updatedAt": datetime.utcnow()}})
+    await _notify_dealer_about_car(dealer, "Comments Disabled", f"{car.get('brand','')} {car.get('model','')}: {note}")
+    return {"message": "Car muted"}
+
+
+@router.post("/cars/{car_id}/unmute")
+async def unmute_car(car_id: str, admin=Depends(require_admin)):
+    db = get_db()
+    car, dealer, q = await _get_car_and_dealer(car_id, db)
+    await db["car_listings"].update_one(q, {"$set": {"adminMuted": False, "updatedAt": datetime.utcnow()}, "$unset": {"adminMutedNote": ""}})
+    await _notify_dealer_about_car(dealer, "Comments Re-enabled", f"Comments are open again on {car.get('brand','')} {car.get('model','')}.")
+    return {"message": "Car unmuted"}
+
+
 #  USERS
 @router.get("/users")
 async def list_users(

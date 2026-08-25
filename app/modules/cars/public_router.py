@@ -88,6 +88,7 @@ async def public_car_feed(
 ):
     db = get_db()
     query: dict = {}
+    query["adminHidden"] = {"$ne": True}
 
     if status and status != "all":
         query["status"] = status

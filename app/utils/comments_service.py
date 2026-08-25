@@ -13,6 +13,8 @@ async def add_comment(user_id: str, car_id: str, text: str) -> dict:
     car = await db["car_listings"].find_one({"carId": car_id})
     if not car:
         raise HTTPException(status_code=404, detail="Car not found")
+    if car.get("adminMuted"):
+        raise HTTPException(status_code=403, detail="Comments have been disabled on this listing.")
 
     user = await db["users"].find_one({"_id": ObjectId(user_id)})
 
