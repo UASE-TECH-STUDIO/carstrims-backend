@@ -74,6 +74,49 @@ async def update_me(data: ProfileUpdate, current_user: dict = Depends(get_curren
     return s
 
 
+class DeleteAccountBody(BaseModel):
+    password: str
+
+
+@router.delete("/me")
+async def delete_my_account(data: DeleteAccountBody, current_user: dict = Depends(get_current_user)):
+    """Self-service account deletion (item 13) - always a soft delete,
+    never a cascade. Every role can reach this, same status:'deleted'
+    mechanism the login flow and the existing admin-initiated delete
+    already use, so a self-deleted account is blocked from logging
+    back in exactly the same way an admin-deleted one is.
+
+    Deliberately never removes any actual data - that's a decision
+    only Super Admin makes (item 14: deleted-account history stays
+    visible to them, and only they can choose to permanently wipe it,
+    either at the person's own request or their own judgment). This
+    endpoint only ever flips status, the same soft-delete branch
+    delete_user already takes when cascade=False.
+
+    Requires the account's own current password as confirmation -
+    a destructive, irreversible-feeling action shouldn't be one
+    accidental tap away.
+    """
+    from fastapi import HTTPException
+    from app.auth.password import verify_password
+
+    db = get_db()
+    if not verify_password(data.password, current_user["passwordHash"]):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+
+    uid = str(current_user["_id"])
+    role = current_user.get("role")
+
+    await db["users"].update_one({"_id": ObjectId(uid)}, {"$set": {"status": "deleted", "updatedAt": datetime.utcnow()}})
+
+    if role == "DEALER_ADMIN":
+        await db["dealer_organizations"].update_one(
+            {"userId": uid}, {"$set": {"status": "deleted", "updatedAt": datetime.utcnow()}}
+        )
+
+    return {"message": "Account deleted"}
+
+
 @router.get("/profile")
 async def get_profile(current_user: dict = Depends(get_current_user)):
     s = serialize_doc(current_user)
