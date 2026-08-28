@@ -33,6 +33,30 @@ async def add_comment(user_id: str, car_id: str, text: str) -> dict:
     result = await db["car_comments"].insert_one(comment_doc)
     comment_doc["_id"] = result.inserted_id
     await db["car_listings"].update_one({"carId": car_id}, {"$inc": {"commentCount": 1}})
+
+    # Notify the dealer that owns this car - same pattern already used
+    # for car likes (toggle_like in user_service.py). This was
+    # missing entirely before, which is exactly why the dealer
+    # dashboard's activity widget - whose own on-screen text promises
+    # "Activity from likes, comments, follows and requests" - never
+    # actually showed comment activity despite comments genuinely
+    # happening.
+    dealer = await db["dealer_organizations"].find_one({"_id": ObjectId(car["dealerId"])}) if ObjectId.is_valid(car.get("dealerId", "")) else None
+    if dealer and dealer.get("userId"):
+        actor_name = user.get("fullName", "Someone") if user else "Someone"
+        await db["notifications"].insert_one({
+            "receiverId": dealer["userId"],
+            "senderId": user_id,
+            "actorId": user_id,
+            "actorName": actor_name,
+            "type": "car_commented",
+            "title": "New Comment",
+            "message": f"{actor_name} commented on your {car.get('brand','')} {car.get('model','')}.",
+            "isRead": False,
+            "data": {"carId": car_id, "carName": f"{car.get('brand','')} {car.get('model','')}"},
+            "createdAt": datetime.utcnow(),
+        })
+
     return serialize_doc(comment_doc)
 
 
