@@ -31,7 +31,43 @@ async def send_web_push_to_user(
     url: str = "/dashboard",
     icon: str = "/icon-192.png",
 ) -> int:
-    """Send Web Push (VAPID) to all subscribed browsers for a user."""
+    """Send a push notification to a user - both Web Push (VAPID, for
+    browser tabs with an active subscription) and native FCM (for the
+    Android/iOS app, via device_tokens) run together here.
+
+    This function's name and signature are unchanged from before, but
+    its actual behavior was previously Web Push only - it is imported
+    and called under this exact name from 30+ places across the
+    backend (follows, dealers, admin, users, movements, partners,
+    messages, notify.py), every one of which assumed calling this
+    reached "the user", not just "the user's open browser tabs". A
+    separate, correctly-built send_fcm_push_to_user already existed
+    lower in this file and worked correctly against the device_tokens
+    the native app registers (see CapacitorPush.tsx) - nothing had
+    ever actually called it. Merging the FCM send in here, under the
+    name every caller already uses, fixes every one of those 30+ call
+    sites at once with no caller-side changes needed, rather than
+    editing each individually.
+    """
+    results = await asyncio.gather(
+        _send_web_push_only(user_id, title, body, url, icon),
+        send_fcm_push_to_user(user_id, title, body, url),
+        return_exceptions=True,
+    )
+    return sum(r for r in results if isinstance(r, int))
+
+
+async def _send_web_push_only(
+    user_id: str,
+    title: str,
+    body: str,
+    url: str = "/dashboard",
+    icon: str = "/icon-192.png",
+) -> int:
+    """The original Web Push (VAPID) implementation, unchanged -
+    renamed so send_web_push_to_user above can call it as one half of
+    a combined send while keeping its own name and signature stable
+    for the 30+ existing callers."""
     if not user_id:
         return 0
 
@@ -184,10 +220,10 @@ async def send_push_to_user(
     url: str = "/dashboard",
     icon: str = "/icon-192.png",
 ) -> int:
-    """Send push to a user via BOTH web push AND FCM app push simultaneously."""
-    results = await asyncio.gather(
-        send_web_push_to_user(user_id, title, body, url, icon),
-        send_fcm_push_to_user(user_id, title, body, url),
-        return_exceptions=True,
-    )
-    return sum(r for r in results if isinstance(r, int))
+    """Alias for send_web_push_to_user, which - despite its name -
+    already sends both Web Push and native FCM together (see its own
+    docstring for why). Kept as a separate, more accurately-named
+    entry point for any future caller who'd otherwise reasonably
+    expect a function literally named send_web_push_to_user to be
+    web-only."""
+    return await send_web_push_to_user(user_id, title, body, url, icon)
