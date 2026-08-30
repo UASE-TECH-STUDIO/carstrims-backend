@@ -89,6 +89,7 @@ async def public_car_feed(
     db = get_db()
     query: dict = {}
     query["adminHidden"] = {"$ne": True}
+    query["images.0"] = {"$exists": True}
 
     if status and status != "all":
         query["status"] = status
@@ -765,7 +766,7 @@ async def public_dealer_profile(dealer_id: str):
         raise HTTPException(status_code=404, detail="Dealer not found")
 
     cars = await db["car_listings"].find(
-        {"dealerId": str(dealer["_id"]), "status": "available"}
+        {"dealerId": str(dealer["_id"]), "status": "available", "images.0": {"$exists": True}}
     ).sort("createdAt", -1).limit(20).to_list(20)
 
     result = serialize_doc(dealer)
