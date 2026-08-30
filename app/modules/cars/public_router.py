@@ -94,8 +94,11 @@ async def public_car_feed(
     if status and status != "all":
         query["status"] = status
 
+    base_query = dict(query)  # always-applicable filters, captured before any search-derived conditions are added - reused below for the "or from a matching dealer" fix (item 8)
+
     understood_filters: list = []  # itemized, human-readable summary of what the search text was understood as — returned to the frontend to show as adjustable filter chips, like Jiji
     leftover_keywords: list = []  # descriptive words that are a soft ranking preference, not a hard filter requirement
+    matching_dealer_ids: list = []  # dealers whose companyName matched the search text (item 8) - referenced later unconditionally, so initialized here even though it's only ever populated inside "if search:"
     ai_handled = False
 
     if search:
@@ -376,6 +379,23 @@ async def public_car_feed(
         if leftover_tokens:
             understood_filters.append({"type": "keyword", "label": " ".join(leftover_tokens), "matchedText": " ".join(leftover_tokens)})
 
+        # Real fix (item 8): a company/dealer name search previously
+        # matched nothing, since dealerName/companyName isn't a field
+        # on the car document at all - only joined in afterward for
+        # display. Looks up dealers whose companyName matches the
+        # search text itself, or any leftover keyword the smart
+        # parser didn't recognize as a specific filter, and folds
+        # their cars into the results as an alternative match - a
+        # company-name search now surfaces that dealer's cars even
+        # when no individual car field mentions the company at all.
+        dealer_name_terms = [t for t in [search.strip()] + list(leftover_keywords) if t]
+        if dealer_name_terms:
+            dealer_matches = await db["dealer_organizations"].find({
+                "status": "approved",
+                "$or": [{"companyName": {"$regex": re.escape(t), "$options": "i"}} for t in dealer_name_terms],
+            }, {"_id": 1}).to_list(50)
+            matching_dealer_ids = [str(d["_id"]) for d in dealer_matches]
+
     if brand:
         query["brand"] = {"$regex": brand, "$options": "i"}
     if condition:
@@ -433,6 +453,14 @@ async def public_car_feed(
     approved_ids = await get_approved_dealer_ids(db)
     if approved_ids:
         query["dealerId"] = {"$in": approved_ids}
+
+    # Item 8: fold in "or from a company-name-matching dealer" now
+    # that the rest of the query is fully built. matching_dealer_ids
+    # is already scoped to approved dealers (looked up with
+    # status: "approved" above), so this is consistent with the
+    # restriction just applied.
+    if matching_dealer_ids:
+        query = {"$or": [query, {**base_query, "dealerId": {"$in": matching_dealer_ids}}]}
 
     total = await db["car_listings"].count_documents(query)
 
