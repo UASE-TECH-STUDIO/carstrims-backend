@@ -142,18 +142,20 @@ async def partner_dashboard(current_user: dict = Depends(get_current_user)):
             dealer_docs = await db["dealer_organizations"].find({"_id": {"$in": [ObjectId(d) for d in dealer_ids]}}).to_list(len(dealer_ids))
             dealers_by_id = {str(d["_id"]): d for d in dealer_docs}
 
-        expense_totals: dict = {}
-        expense_docs = await db["expense_records"].find({"carId": {"$in": all_car_ids}}).to_list(2000)
-        for e in expense_docs:
-            expense_totals[e["carId"]] = expense_totals.get(e["carId"], 0) + (e.get("amount", 0) or 0)
-
         for c in car_docs:
             s = serialize_doc(c)
             dealer = dealers_by_id.get(c.get("dealerId"))
             if dealer:
                 s["dealerName"] = dealer.get("companyName")
                 s["dealerLogo"] = dealer.get("logo")
-            s["totalExpenses"] = expense_totals.get(c.get("carId"), 0)
+            # Real privacy fix: a partner is linked to specific cars,
+            # not given a window into the dealer's cost structure on
+            # them. purchasePrice/estimatedProfit/actualProfit/
+            # minNegotiationPrice are all dealer-internal figures that
+            # serialize_doc would otherwise pass through generically
+            # since they live directly on the car document.
+            for financial_field in ("purchasePrice", "estimatedProfit", "actualProfit", "minNegotiationPrice"):
+                s.pop(financial_field, None)
             cars.append(s)
 
     dealers = []
@@ -165,6 +167,10 @@ async def partner_dashboard(current_user: dict = Depends(get_current_user)):
                 s["linkId"] = str(link["_id"])
                 s["linkStatus"] = link.get("status")
                 s["carsAssigned"] = len(link.get("carIds", []))
+                # Same fix, dealer-level: totalRevenue is the dealer's
+                # whole-business aggregate, not scoped to this
+                # partner's own cars at all - not this partner's to see.
+                s.pop("totalRevenue", None)
                 dealers.append(s)
 
     sold_cars = [c for c in cars if c.get("status") == "sold"]
@@ -191,8 +197,18 @@ async def partner_earnings(current_user: dict = Depends(get_current_dealer_or_st
     db = get_db()
     links = await db["partner_links"].find({"userId": str(current_user["_id"])}).to_list(100)
     all_car_ids = []
+    # A partner could have different agreed percentages with
+    # different dealers - each link carries its own carIds and its
+    # own revenueSharePercent, so this maps every car back to the
+    # specific percentage that applies to it.
+    share_percent_by_car: dict = {}
     for link in links:
-        all_car_ids.extend(link.get("carIds", []))
+        car_ids = link.get("carIds", [])
+        all_car_ids.extend(car_ids)
+        pct = link.get("revenueSharePercent")
+        if pct is not None:
+            for cid in car_ids:
+                share_percent_by_car[cid] = pct
 
     sales = await db["sale_transactions"].find(
         {"carId": {"$in": all_car_ids}}
@@ -208,11 +224,22 @@ async def partner_earnings(current_user: dict = Depends(get_current_dealer_or_st
             monthly[key]["revenue"] += s.get("sellingPrice", 0)
             monthly[key]["count"] += 1
 
+    recent_sales = []
+    for s in sales[:10]:
+        sd = serialize_doc(s)
+        pct = share_percent_by_car.get(s.get("carId"))
+        net_profit = s.get("netProfit")
+        if pct is not None and net_profit is not None:
+            sd["partnerShare"] = round(net_profit * (pct / 100), 2)
+        for financial_field in ("purchasePrice", "profit", "expenses", "netProfit"):
+            sd.pop(financial_field, None)
+        recent_sales.append(sd)
+
     return {
         "totalSales": len(sales),
         "totalRevenue": sum(s.get("sellingPrice", 0) for s in sales),
         "monthlySales": list(monthly.values())[-6:],
-        "recentSales": [serialize_doc(s) for s in sales[:10]],
+        "recentSales": recent_sales,
     }
 
 
