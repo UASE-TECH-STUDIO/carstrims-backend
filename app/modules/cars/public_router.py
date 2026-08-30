@@ -690,10 +690,11 @@ async def universal_search(
     if "dealers" in want:
         # Token-aware matching: split the query into words and require
         # EVERY meaningful word to match SOMEWHERE across the dealer's
-        # name/city/state fields — so "musa abuja" or "looking for
-        # dealer musa in abuja" correctly finds a dealer named Musa
-        # located in Abuja, even though no single field contains the
-        # literal phrase.
+        # name/city/state/dealer-ID fields — so "musa abuja" or
+        # "looking for dealer musa in abuja" correctly finds a dealer
+        # named Musa located in Abuja, even though no single field
+        # contains the literal phrase. Also matches the dealer's own
+        # assigned dealer ID number directly (item 7).
         tokens = [t for t in q.strip().split() if t and t.lower() not in STOPWORDS]
         token_conditions = [
             {"$or": [
@@ -701,6 +702,7 @@ async def universal_search(
                 {"ownerName": {"$regex": re.escape(tok), "$options": "i"}},
                 {"city": {"$regex": re.escape(tok), "$options": "i"}},
                 {"state": {"$regex": re.escape(tok), "$options": "i"}},
+                {"dealerId": {"$regex": re.escape(tok), "$options": "i"}},
             ]}
             for tok in tokens
         ] or [{"companyName": {"$regex": re.escape(q), "$options": "i"}}]
